@@ -1,6 +1,7 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
+import { useState, useEffect } from "react";
 import {
   ShieldCheck,
   Zap,
@@ -12,6 +13,8 @@ import {
   BarChart3,
   Activity,
 } from "lucide-react";
+import { LampContainer } from "@/components/ui/lamp";
+import SplashScreen from "@/components/ui/splash-screen";
 
 const trustPoints = [
   {
@@ -84,21 +87,25 @@ export default function AuthLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const [showSplash, setShowSplash] = useState(true);
+
+  // When splash is true, delay layout animations until splash slides up (approx 2.4s)
+  const globalDelay = showSplash ? 2.4 : 0;
+
   return (
-    <div className="min-h-screen flex bg-[#0a0b0f]">
+    <>
+      {showSplash && <SplashScreen onComplete={() => setShowSplash(false)} />}
+      <div className="min-h-screen flex bg-[#0a0b0f]">
       {/* LEFT BRAND PANEL */}
       <div className="hidden lg:flex lg:w-[52%] relative overflow-hidden flex-col">
-        {/* Background gradient mesh */}
-        <div className="absolute inset-0">
-          <div className="absolute inset-0 bg-gradient-to-br from-[#0a0b0f] via-[#0d0f1a] to-[#0a0b0f]" />
-          <div className="absolute top-0 left-0 w-full h-full">
-            <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-indigo-600/10 rounded-full blur-3xl" />
-            <div className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-blue-600/10 rounded-full blur-3xl" />
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-violet-600/8 rounded-full blur-2xl" />
-          </div>
+        {/* Background Lamp Effect */}
+        <div className="absolute inset-0 overflow-hidden bg-slate-950">
+          <LampContainer className="absolute inset-0 z-0 h-full w-full min-h-0 bg-transparent -translate-y-64 scale-110">
+             <div className="hidden" />
+          </LampContainer>
           {/* Grid pattern */}
           <div
-            className="absolute inset-0 opacity-[0.04]"
+            className="absolute inset-0 opacity-[0.04] z-10 pointer-events-none"
             style={{
               backgroundImage:
                 "linear-gradient(rgba(99,102,241,1) 1px, transparent 1px), linear-gradient(90deg, rgba(99,102,241,1) 1px, transparent 1px)",
@@ -112,7 +119,7 @@ export default function AuthLayout({
           <motion.div
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.6 }}
+            transition={{ duration: 0.6, delay: globalDelay }}
             className="flex items-center gap-3"
           >
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-blue-600 flex items-center justify-center shadow-lg shadow-indigo-500/30">
@@ -132,7 +139,7 @@ export default function AuthLayout({
           <motion.div
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.7, delay: 0.2 }}
+            transition={{ duration: 0.7, delay: 0.2 + globalDelay }}
             className="mt-16 xl:mt-20"
           >
             <h1 className="text-4xl xl:text-5xl font-bold text-white leading-tight">
@@ -155,7 +162,7 @@ export default function AuthLayout({
                 key={i}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5, delay: 0.4 + metric.delay }}
+                transition={{ duration: 0.5, delay: 0.4 + metric.delay + globalDelay }}
               >
                 <motion.div
                   animate={floatAnimation}
@@ -189,7 +196,7 @@ export default function AuthLayout({
                 key={i}
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
-                transition={{ duration: 0.5, delay: 0.8 + i * 0.1 }}
+                transition={{ duration: 0.5, delay: 0.8 + i * 0.1 + globalDelay }}
                 className="flex items-start gap-3"
               >
                 <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-indigo-500/15 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
@@ -211,7 +218,7 @@ export default function AuthLayout({
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            transition={{ duration: 0.5, delay: 1.2 }}
+            transition={{ duration: 0.5, delay: 1.2 + globalDelay }}
             className="mt-auto pt-8 flex items-center gap-4 flex-wrap"
           >
             {["SOC 2 Type II", "ISO 27001", "GDPR Ready", "GST Compliant"].map(
@@ -260,7 +267,7 @@ export default function AuthLayout({
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ delay: 0.8 }}
+          transition={{ delay: 0.8 + globalDelay }}
           className="mt-8 flex items-center gap-2 text-xs text-slate-600 relative z-10"
         >
           <Lock className="w-3 h-3" />
@@ -268,5 +275,6 @@ export default function AuthLayout({
         </motion.div>
       </div>
     </div>
+    </>
   );
 }

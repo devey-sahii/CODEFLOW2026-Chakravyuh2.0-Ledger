@@ -4,6 +4,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Sidebar from "@/components/layout/sidebar";
 import Navbar from "@/components/layout/navbar";
+import AtmosphericBg from "@/components/ui/atmospheric-bg";
 
 export default function DashboardLayout({
   children,
@@ -14,7 +15,10 @@ export default function DashboardLayout({
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#0a0b0f]">
+    <div className="flex h-screen overflow-hidden bg-[#0a0b0f] relative">
+      {/* Twilight atmospheric starry background */}
+      <AtmosphericBg />
+
       {/* Mobile overlay */}
       <AnimatePresence>
         {mobileSidebarOpen && (
@@ -29,7 +33,7 @@ export default function DashboardLayout({
       </AnimatePresence>
 
       {/* Sidebar — desktop */}
-      <div className="hidden lg:flex flex-shrink-0">
+      <div className="hidden lg:flex flex-shrink-0 z-10 relative">
         <Sidebar
           isOpen={sidebarOpen}
           onToggle={() => setSidebarOpen(!sidebarOpen)}
@@ -37,7 +41,7 @@ export default function DashboardLayout({
       </div>
 
       {/* Sidebar — mobile */}
-      <div className="lg:hidden">
+      <div className="lg:hidden z-50 relative">
         <AnimatePresence>
           {mobileSidebarOpen && (
             <motion.div
@@ -58,7 +62,7 @@ export default function DashboardLayout({
       </div>
 
       {/* Main area */}
-      <div className="flex flex-col flex-1 overflow-hidden">
+      <div className="flex flex-col flex-1 overflow-hidden z-10 relative">
         {/* Navbar */}
         <Navbar
           onMenuToggle={() => {
@@ -86,3 +90,4 @@ export default function DashboardLayout({
     </div>
   );
 }
+

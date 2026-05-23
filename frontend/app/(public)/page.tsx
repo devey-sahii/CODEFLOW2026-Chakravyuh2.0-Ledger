@@ -3,6 +3,8 @@
 import { motion } from "framer-motion";
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import MagicRings from "@/components/ui/magic-rings";
+import { LampDemo } from "@/components/ui/lamp";
 import {
   ShieldCheck,
   ArrowRight,
@@ -171,7 +173,14 @@ export default function LandingPage() {
   }, []);
 
   return (
-    <div className="bg-[#0a0b0f] min-h-screen text-slate-100 font-sans selection:bg-indigo-500/30 selection:text-white pb-24 overflow-x-hidden">
+    <div className="bg-[#0a0b0f] min-h-screen text-slate-100 font-sans selection:bg-indigo-500/30 selection:text-white pb-24 overflow-x-hidden relative">
+      {/* Magic Rings Background */}
+      <div className="fixed inset-0 z-[-1] opacity-70">
+        <MagicRings followMouse={true} mouseInfluence={0.5} />
+      </div>
+
+      <LampDemo />
+
       {/* Hero Section */}
       <section className="relative min-h-[90vh] flex items-center justify-center pt-28 pb-16 px-6">
         {/* Animated Gradient Mesh */}
