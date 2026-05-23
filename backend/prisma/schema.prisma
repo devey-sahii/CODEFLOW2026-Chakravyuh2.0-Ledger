@@ -1,0 +1,394 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-py"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("SYNC_DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum Role {
+  EMPLOYEE
+  FINANCE_MANAGER
+  AUDITOR
+  ADMIN
+}
+
+enum SubscriptionPlan {
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+enum ExpenseStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  FLAGGED
+}
+
+enum ExpenseCategory {
+  TRAVEL
+  ACCOMMODATION
+  MEALS
+  OFFICE_SUPPLIES
+  SOFTWARE
+  HARDWARE
+  MARKETING
+  TRAINING
+  MEDICAL
+  UTILITIES
+  OTHER
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ProcessingStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum AuditSeverity {
+  INFO
+  WARNING
+  ERROR
+  CRITICAL
+}
+
+enum FraudReportStatus {
+  OPEN
+  INVESTIGATING
+  CONFIRMED
+  DISMISSED
+}
+
+enum NotificationType {
+  FRAUD_ALERT
+  EXPENSE_APPROVED
+  EXPENSE_REJECTED
+  SYSTEM
+  GST_ALERT
+  RISK_ALERT
+}
+
+// ─── Organization ────────────────────────────────────────────────────────────
+
+model Organization {
+  id               String           @id @default(uuid())
+  name             String
+  domain           String?          @unique
+  gstin            String?
+  logo_url         String?
+  subscription_plan SubscriptionPlan @default(STARTER)
+  is_active        Boolean          @default(true)
+  max_employees    Int              @default(25)
+  created_at       DateTime         @default(now())
+  updated_at       DateTime         @updatedAt
+
+  users            User[]
+  employees        Employee[]
+  vendors          Vendor[]
+  expense_claims   ExpenseClaim[]
+  audit_logs       AuditLog[]
+  fraud_reports    FraudReport[]
+  gst_validations  GSTValidation[]
+  notifications    Notification[]
+  api_keys         APIKey[]
+  policies         ExpensePolicy[]
+
+  @@map("organizations")
+}
+
+// ─── User ─────────────────────────────────────────────────────────────────────
+
+model User {
+  id               String       @id @default(uuid())
+  email            String       @unique
+  hashed_password  String
+  full_name        String
+  role             Role         @default(EMPLOYEE)
+  is_active        Boolean      @default(true)
+  is_verified      Boolean      @default(false)
+  otp_secret       String?
+  avatar_url       String?
+  phone            String?
+  department       String?
+  organization_id  String
+  created_at       DateTime     @default(now())
+  updated_at       DateTime     @updatedAt
+
+  organization     Organization @relation(fields: [organization_id], references: [id])
+  expense_claims   ExpenseClaim[]
+  reviewed_claims  ExpenseClaim[] @relation("Reviewer")
+  audit_logs       AuditLog[]
+  notifications    Notification[]
+
+  @@index([email])
+  @@index([organization_id])
+  @@map("users")
+}
+
+// ─── Employee ─────────────────────────────────────────────────────────────────
+
+model Employee {
+  id               String       @id @default(uuid())
+  organization_id  String
+  user_id          String?      @unique
+  full_name        String
+  email            String
+  department       String
+  designation      String?
+  employee_code    String?
+  risk_score       Float        @default(0.0)
+  total_claims     Int          @default(0)
+  total_spend      Float        @default(0.0)
+  is_active        Boolean      @default(true)
+  joined_at        DateTime?
+  created_at       DateTime     @default(now())
+  updated_at       DateTime     @updatedAt
+
+  organization     Organization @relation(fields: [organization_id], references: [id])
+
+  @@index([organization_id])
+  @@index([email])
+  @@map("employees")
+}
+
+// ─── Vendor ───────────────────────────────────────────────────────────────────
+
+model Vendor {
+  id                String      @id @default(uuid())
+  organization_id   String
+  name              String
+  gstin             String?
+  email             String?
+  phone             String?
+  address           String?
+  category          String?
+  fraud_score       Float       @default(0.0)
+  compliance_score  Float       @default(100.0)
+  transaction_count Int         @default(0)
+  total_amount      Float       @default(0.0)
+  is_verified       Boolean     @default(false)
+  is_blacklisted    Boolean     @default(false)
+  risk_level        RiskLevel   @default(LOW)
+  created_at        DateTime    @default(now())
+  updated_at        DateTime    @updatedAt
+
+  organization      Organization @relation(fields: [organization_id], references: [id])
+  receipts          Receipt[]
+
+  @@index([organization_id])
+  @@index([gstin])
+  @@map("vendors")
+}
+
+// ─── Expense Claim ────────────────────────────────────────────────────────────
+
+model ExpenseClaim {
+  id              String         @id @default(uuid())
+  title           String
+  description     String?
+  amount          Float
+  currency        String         @default("INR")
+  category        ExpenseCategory
+  status          ExpenseStatus  @default(PENDING)
+  employee_id     String
+  organization_id String
+  reviewed_by     String?
+  submitted_at    DateTime       @default(now())
+  reviewed_at     DateTime?
+  fraud_score     Float?
+  risk_level      RiskLevel?
+  notes           String?
+  created_at      DateTime       @default(now())
+  updated_at      DateTime       @updatedAt
+
+  employee        User           @relation(fields: [employee_id], references: [id])
+  reviewer        User?          @relation("Reviewer", fields: [reviewed_by], references: [id])
+  organization    Organization   @relation(fields: [organization_id], references: [id])
+  receipts        Receipt[]
+  fraud_reports   FraudReport[]
+
+  @@index([organization_id])
+  @@index([employee_id])
+  @@index([status])
+  @@index([submitted_at])
+  @@map("expense_claims")
+}
+
+// ─── Receipt ─────────────────────────────────────────────────────────────────
+
+model Receipt {
+  id                  String          @id @default(uuid())
+  expense_claim_id    String
+  vendor_id           String?
+  file_url            String
+  file_name           String
+  file_type           String
+  file_size           Int?
+  ocr_extracted_data  Json?
+  vendor_name         String?
+  gstin               String?
+  invoice_number      String?
+  invoice_date        DateTime?
+  tax_amount          Float?
+  total_amount        Float?
+  processing_status   ProcessingStatus @default(PROCESSING)
+  ai_analysis         Json?
+  created_at          DateTime        @default(now())
+
+  expense_claim       ExpenseClaim    @relation(fields: [expense_claim_id], references: [id])
+  vendor              Vendor?         @relation(fields: [vendor_id], references: [id])
+  fraud_reports       FraudReport[]
+
+  @@index([expense_claim_id])
+  @@index([invoice_number])
+  @@index([gstin])
+  @@map("receipts")
+}
+
+// ─── Fraud Report ─────────────────────────────────────────────────────────────
+
+model FraudReport {
+  id               String            @id @default(uuid())
+  receipt_id       String?
+  expense_claim_id String
+  organization_id  String
+  fraud_score      Float
+  confidence       Float
+  fraud_types      Json
+  ai_reasoning     String
+  is_confirmed     Boolean           @default(false)
+  reviewed_by      String?
+  status           FraudReportStatus @default(OPEN)
+  created_at       DateTime          @default(now())
+  updated_at       DateTime          @updatedAt
+
+  receipt          Receipt?          @relation(fields: [receipt_id], references: [id])
+  expense_claim    ExpenseClaim      @relation(fields: [expense_claim_id], references: [id])
+  organization     Organization      @relation(fields: [organization_id], references: [id])
+
+  @@index([organization_id])
+  @@index([expense_claim_id])
+  @@index([status])
+  @@map("fraud_reports")
+}
+
+// ─── GST Validation ───────────────────────────────────────────────────────────
+
+model GSTValidation {
+  id               String       @id @default(uuid())
+  gstin            String
+  organization_id  String
+  is_valid         Boolean      @default(false)
+  business_name    String?
+  state_code       String?
+  registration_date DateTime?
+  compliance_score Float?
+  last_validated   DateTime     @default(now())
+  validation_data  Json?
+
+  organization     Organization @relation(fields: [organization_id], references: [id])
+
+  @@unique([gstin, organization_id])
+  @@index([gstin])
+  @@map("gst_validations")
+}
+
+// ─── Audit Log ────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id              String        @id @default(uuid())
+  organization_id String
+  user_id         String?
+  action          String
+  resource_type   String
+  resource_id     String?
+  old_values      Json?
+  new_values      Json?
+  ip_address      String?
+  user_agent      String?
+  severity        AuditSeverity @default(INFO)
+  created_at      DateTime      @default(now())
+
+  organization    Organization  @relation(fields: [organization_id], references: [id])
+  user            User?         @relation(fields: [user_id], references: [id])
+
+  @@index([organization_id])
+  @@index([user_id])
+  @@index([created_at])
+  @@index([resource_type])
+  @@map("audit_logs")
+}
+
+// ─── Notification ─────────────────────────────────────────────────────────────
+
+model Notification {
+  id              String           @id @default(uuid())
+  user_id         String
+  organization_id String
+  type            NotificationType
+  title           String
+  message         String
+  is_read         Boolean          @default(false)
+  metadata        Json?
+  created_at      DateTime         @default(now())
+
+  user            User             @relation(fields: [user_id], references: [id])
+  organization    Organization     @relation(fields: [organization_id], references: [id])
+
+  @@index([user_id])
+  @@index([is_read])
+  @@map("notifications")
+}
+
+// ─── API Key ──────────────────────────────────────────────────────────────────
+
+model APIKey {
+  id              String       @id @default(uuid())
+  organization_id String
+  name            String
+  key_hash        String       @unique
+  key_prefix      String
+  is_active       Boolean      @default(true)
+  last_used_at    DateTime?
+  expires_at      DateTime?
+  created_at      DateTime     @default(now())
+
+  organization    Organization @relation(fields: [organization_id], references: [id])
+
+  @@index([organization_id])
+  @@map("api_keys")
+}
+
+// ─── Expense Policy ───────────────────────────────────────────────────────────
+
+model ExpensePolicy {
+  id                   String          @id @default(uuid())
+  organization_id      String
+  category             ExpenseCategory
+  max_amount           Float
+  requires_receipt     Boolean         @default(true)
+  requires_approval    Boolean         @default(true)
+  auto_approve_below   Float?
+  is_active            Boolean         @default(true)
+  created_at           DateTime        @default(now())
+  updated_at           DateTime        @updatedAt
+
+  organization         Organization    @relation(fields: [organization_id], references: [id])
+
+  @@unique([organization_id, category])
+  @@map("expense_policies")
+}
