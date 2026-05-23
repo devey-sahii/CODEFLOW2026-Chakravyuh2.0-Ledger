@@ -10,7 +10,7 @@ import {
   ArrowUpRight,
   CheckCircle2,
   Lock,
-  BarChart3,
+  BarChart,
   Activity,
 } from "lucide-react";
 import { LampContainer } from "@/components/ui/lamp";
@@ -39,7 +39,7 @@ const floatingMetrics = [
     label: "Expenses Audited",
     value: "₹2.4Cr",
     change: "+12.5%",
-    icon: <BarChart3 className="w-4 h-4" />,
+    icon: <BarChart className="w-4 h-4" />,
     color: "from-indigo-500/20 to-blue-500/20",
     borderColor: "border-indigo-500/30",
     delay: 0,

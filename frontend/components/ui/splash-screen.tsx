@@ -1,6 +1,6 @@
 "use client";
 
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, Variants } from "framer-motion";
 import { useEffect, useState } from "react";
 import { ShieldCheck } from "lucide-react";
 
@@ -26,7 +26,7 @@ export default function SplashScreen({ onComplete }: SplashScreenProps) {
 
   const word = "LEDGER";
 
-  const containerVariants = {
+  const containerVariants: Variants = {
     hidden: { opacity: 1 },
     visible: {
       opacity: 1,
@@ -37,7 +37,7 @@ export default function SplashScreen({ onComplete }: SplashScreenProps) {
     },
   };
 
-  const letterVariants = {
+  const letterVariants: Variants = {
     hidden: { opacity: 0, y: 20 },
     visible: {
       opacity: 1,
