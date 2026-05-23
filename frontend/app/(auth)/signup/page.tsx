@@ -31,6 +31,7 @@ import {
   GoogleAuthProvider,
 } from "firebase/auth";
 import { app } from "@/lib/firebase";
+import { useAuthStore } from "@/store/auth-store";
 
 const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
@@ -187,19 +188,39 @@ export default function SignupPage() {
     setIsLoading(true);
     setError(null);
     try {
-      // For this example, we'll just create the user and log the org data
       const userCredential = await createUserWithEmailAndPassword(
         auth,
         data.email,
         data.password
       );
+      const token = await userCredential.user.getIdToken();
+      document.cookie = `access_token=${token}; path=/; max-age=86400`;
+      
+      useAuthStore.getState().setUser({
+        id: userCredential.user.uid,
+        email: userCredential.user.email || data.email,
+        full_name: data.full_name || userCredential.user.displayName || "User",
+        role: selectedRole as any,
+        organization_id: "org-id",
+        avatar_url: userCredential.user.photoURL || null,
+        department: "Finance",
+        employee_id: "EMP-001",
+        phone: userCredential.user.phoneNumber || null,
+        is_active: true,
+        is_verified: userCredential.user.emailVerified,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        last_login_at: new Date().toISOString(),
+      });
+      useAuthStore.getState().setTokens(token, token);
+      
       console.log("User created:", userCredential.user);
       console.log("Organization data:", {
         org_name: data.org_name,
         gstin: data.gstin,
         subscription_plan: data.subscription_plan,
       });
-      router.push("/dashboard");
+      window.location.href = "/dashboard";
     } catch (error: any) {
       setError(error.message);
     } finally {
@@ -211,8 +232,28 @@ export default function SignupPage() {
     setIsLoading(true);
     setError(null);
     try {
-      await signInWithPopup(auth, provider);
-      router.push("/dashboard");
+      const result = await signInWithPopup(auth, provider);
+      const token = await result.user.getIdToken();
+      document.cookie = `access_token=${token}; path=/; max-age=86400`;
+      
+      useAuthStore.getState().setUser({
+        id: result.user.uid,
+        email: result.user.email || "",
+        full_name: result.user.displayName || "User",
+        role: "admin",
+        organization_id: "org-id",
+        avatar_url: result.user.photoURL || null,
+        department: "Finance",
+        employee_id: "EMP-001",
+        phone: result.user.phoneNumber || null,
+        is_active: true,
+        is_verified: result.user.emailVerified,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        last_login_at: new Date().toISOString(),
+      });
+      useAuthStore.getState().setTokens(token, token);
+      window.location.href = "/dashboard";
     } catch (error: any) {
       setError(error.message);
     } finally {

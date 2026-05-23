@@ -23,6 +23,7 @@ import {
   ChevronRight,
   X,
 } from "lucide-react";
+import { useAuthStore } from "@/store/auth-store";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -44,17 +45,17 @@ const navSections: NavSection[] = [
   {
     title: "MAIN",
     items: [
-      { label: "Dashboard", href: "/dashboard", icon: <LayoutDashboard className="w-4 h-4" /> },
+      { label: "Dashboard Overview", href: "/dashboard", icon: <LayoutDashboard className="w-4 h-4" /> },
       { label: "Upload Receipt", href: "/dashboard/upload", icon: <Upload className="w-4 h-4" /> },
-      { label: "Expense Claims", href: "/dashboard/claims", icon: <FileText className="w-4 h-4" />, badge: 12 },
+      { label: "Expense Claims", href: "/dashboard/expenses", icon: <FileText className="w-4 h-4" />, badge: 12 },
     ],
   },
   {
-    title: "DETECTION",
+    title: "DETECTION & AI",
     items: [
-      { label: "Fraud Detection", href: "/dashboard/fraud", icon: <ShieldAlert className="w-4 h-4" />, badge: 3 },
+      { label: "Fraud Alerts", href: "/dashboard/fraud", icon: <ShieldAlert className="w-4 h-4" />, badge: 3 },
       { label: "GST Compliance", href: "/dashboard/gst", icon: <Receipt className="w-4 h-4" /> },
-      { label: "AI Risk Reports", href: "/dashboard/risk", icon: <Brain className="w-4 h-4" /> },
+      { label: "AI Recommendations", href: "/dashboard/risk-reports", icon: <Brain className="w-4 h-4" /> },
     ],
   },
   {
@@ -68,7 +69,7 @@ const navSections: NavSection[] = [
     title: "INSIGHTS",
     items: [
       { label: "Analytics", href: "/dashboard/analytics", icon: <BarChart3 className="w-4 h-4" /> },
-      { label: "Audit Logs", href: "/dashboard/audit-logs", icon: <ScrollText className="w-4 h-4" /> },
+      { label: "Activity Timeline", href: "/dashboard/audit-logs", icon: <ScrollText className="w-4 h-4" /> },
       { label: "Integrations", href: "/dashboard/integrations", icon: <Plug className="w-4 h-4" /> },
     ],
   },
@@ -126,8 +127,11 @@ export default function Sidebar({ isOpen, onToggle, isMobile }: SidebarProps) {
     return pathname.startsWith(href);
   };
 
+  const logout = useAuthStore((state) => state.logout);
+
   const handleLogout = () => {
     document.cookie = "access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    logout();
     router.push("/login");
   };
 

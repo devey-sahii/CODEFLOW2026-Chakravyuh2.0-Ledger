@@ -6,6 +6,9 @@ interface AtmosphericBgProps {
   opacity?: number
 }
 
+// Helper to round floats to 2 decimal places to prevent SSR/CSR hydration mismatch
+const f = (n: number) => n.toFixed(2)
+
 export default function AtmosphericBg({ opacity = 1 }: AtmosphericBgProps) {
   // Generate grass layers once to avoid recalculating on every render
   const rearLayer = useMemo(() => {
@@ -25,7 +28,7 @@ export default function AtmosphericBg({ opacity = 1 }: AtmosphericBgProps) {
       blades.push(
         <path
           key={i}
-          d={`M ${x} 300 Q ${x + skew} ${300 - organicHeight}, ${x + skew * 1.1} ${300 - organicHeight} Q ${x + bladeWidth + skew} ${300 - organicHeight * 0.85}, ${x + bladeWidth} 300 Z`}
+          d={`M ${f(x)} 300 Q ${f(x + skew)} ${f(300 - organicHeight)}, ${f(x + skew * 1.1)} ${f(300 - organicHeight)} Q ${f(x + bladeWidth + skew)} ${f(300 - organicHeight * 0.85)}, ${f(x + bladeWidth)} 300 Z`}
           fill="#08102a"
           opacity="0.35"
         />
@@ -51,7 +54,7 @@ export default function AtmosphericBg({ opacity = 1 }: AtmosphericBgProps) {
       blades.push(
         <path
           key={i}
-          d={`M ${x} 300 Q ${x + skew} ${300 - organicHeight}, ${x + skew * 1.15} ${300 - organicHeight} Q ${x + bladeWidth + skew} ${300 - organicHeight * 0.8}, ${x + bladeWidth} 300 Z`}
+          d={`M ${f(x)} 300 Q ${f(x + skew)} ${f(300 - organicHeight)}, ${f(x + skew * 1.15)} ${f(300 - organicHeight)} Q ${f(x + bladeWidth + skew)} ${f(300 - organicHeight * 0.8)}, ${f(x + bladeWidth)} 300 Z`}
           fill="#050a1b"
           opacity="0.6"
         />
@@ -77,7 +80,7 @@ export default function AtmosphericBg({ opacity = 1 }: AtmosphericBgProps) {
       blades.push(
         <path
           key={i}
-          d={`M ${x} 300 Q ${x + skew} ${300 - organicHeight}, ${x + skew * 1.2} ${300 - organicHeight} Q ${x + bladeWidth + skew} ${300 - organicHeight * 0.8}, ${x + bladeWidth} 300 Z`}
+          d={`M ${f(x)} 300 Q ${f(x + skew)} ${f(300 - organicHeight)}, ${f(x + skew * 1.2)} ${f(300 - organicHeight)} Q ${f(x + bladeWidth + skew)} ${f(300 - organicHeight * 0.8)}, ${f(x + bladeWidth)} 300 Z`}
           fill="#02040b"
           opacity="0.85"
         />
