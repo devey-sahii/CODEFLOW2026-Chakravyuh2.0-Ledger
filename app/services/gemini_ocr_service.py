@@ -1,11 +1,16 @@
 """
-Gemini 3.1 Flash-Lite OCR service for the LEDGER platform.
+Gemini OCR + Fraud Detection service for the LEDGER platform.
 
-Sends invoice/receipt images and PDFs to Google's Gemini 3.1 Flash-Lite model
-for structured data extraction. Returns a validated, structured JSON invoice
-object including vendor details, GSTIN, line items, amounts, and fraud signals.
+Phase 1 ── Document Gate
+  Sends the image to Gemini and asks: "Is this a legitimate invoice/receipt?"
+  If the answer is NO, raises NotAnInvoiceError immediately — the upload
+  is hard-rejected before any data is extracted.
 
-Falls back gracefully to the mock OCR service if Gemini API is unavailable.
+Phase 2 ── Extraction + Fraud Analysis
+  Full structured extraction of all invoice fields AND a deep fraud-score
+  computed entirely by Gemini, not by a random number generator.
+  Fraud signals, tampering indicators, and a definitive is_fraud boolean
+  are all returned and honoured by the upload endpoint.
 """
 
 from __future__ import annotations
@@ -14,7 +19,7 @@ import base64
 import json
 import re
 import time
-from datetime import date, timedelta
+from datetime import date
 from typing import Any
 
 import httpx
@@ -23,24 +28,65 @@ from loguru import logger
 from app.core.config import settings
 
 
+# ─── Custom exception ─────────────────────────────────────────────────────────
+
+class NotAnInvoiceError(Exception):
+    """Raised when the uploaded image is not a valid invoice or receipt."""
+    def __init__(self, reason: str = "Not an invoice"):
+        self.reason = reason
+        super().__init__(reason)
+
+
+class FraudulentInvoiceError(Exception):
+    """Raised when Gemini conclusively identifies the document as fraudulent."""
+    def __init__(self, reason: str, fraud_score: float, signals: list[str]):
+        self.reason = reason
+        self.fraud_score = fraud_score
+        self.signals = signals
+        super().__init__(reason)
+
+
 # ─── Gemini API Constants ──────────────────────────────────────────────────────
 
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 GEMINI_MODEL = "gemini-2.0-flash-lite"
-GEMINI_TIMEOUT_SECS = 60
+GEMINI_TIMEOUT_SECS = 90
 
 
-# ─── Extraction Prompt ─────────────────────────────────────────────────────────
+# ─── Phase 1: Document Gate Prompt ────────────────────────────────────────────
 
-INVOICE_EXTRACTION_PROMPT = """You are an expert Indian GST invoice OCR engine integrated into an enterprise expense auditing platform (LEDGER). 
+GATE_PROMPT = """You are a strict document classifier for a financial auditing system.
 
-Analyze this invoice/receipt image or PDF and extract ALL available information. Return ONLY valid JSON with no markdown, no explanation, no code blocks — just raw JSON.
+Your ONLY job right now is to decide: Is this image a genuine business invoice, tax invoice, receipt, bill, or similar financial document?
 
-Extract the following fields:
+Answer with ONLY valid JSON, no markdown, no explanation:
+{
+  "is_invoice": true or false,
+  "document_type": "TAX_INVOICE | RECEIPT | BILL | PROFORMA | CREDIT_NOTE | NOT_AN_INVOICE | UNCLEAR",
+  "confidence": 0.0 to 1.0,
+  "rejection_reason": "Reason if not an invoice, else null"
+}
+
+Rules:
+- Return is_invoice: true ONLY if you can clearly see a business financial document (invoice, bill, receipt, GST invoice, etc.)
+- Return is_invoice: false for: selfies, random photos, screenshots of unrelated content, memes, blank paper, handwritten personal notes with no financial context, or anything that is clearly NOT a financial document.
+- If the image is blurry/unclear but appears to be an invoice, return is_invoice: true with low confidence.
+- Be STRICT. When in doubt about non-financial documents, return false.
+"""
+
+# ─── Phase 2: Full Extraction + Fraud Analysis Prompt ────────────────────────
+
+EXTRACTION_PROMPT = """You are an expert Indian GST invoice forensic auditor integrated into LEDGER, an enterprise expense auditing platform.
+
+Analyze this invoice/receipt with TWO goals:
+1. Extract all invoice data accurately.
+2. Perform a comprehensive FRAUD ANALYSIS and assign a real fraud score.
+
+Return ONLY valid JSON with no markdown, no code blocks — just raw JSON:
 
 {
   "vendor_name": "Full legal company name as printed",
-  "vendor_address": "Full address if visible",
+  "vendor_address": "Full address if visible, else null",
   "gstin": "15-character GSTIN if visible, else null",
   "pan": "PAN number if visible, else null",
   "invoice_number": "Invoice/receipt number",
@@ -50,66 +96,91 @@ Extract the following fields:
   "items": [
     {
       "description": "Line item description",
-      "hsn_sac": "HSN/SAC code if visible",
-      "quantity": numeric_quantity,
-      "unit": "unit of measure",
-      "unit_price": numeric_unit_price,
-      "discount": numeric_discount_amount_or_0,
-      "taxable_value": numeric_taxable_value,
-      "cgst_rate": numeric_cgst_percentage_or_0,
-      "sgst_rate": numeric_sgst_percentage_or_0,
-      "igst_rate": numeric_igst_percentage_or_0,
-      "cgst_amount": numeric_or_0,
-      "sgst_amount": numeric_or_0,
-      "igst_amount": numeric_or_0,
-      "total": numeric_line_total
+      "hsn_sac": "HSN/SAC code if visible, else null",
+      "quantity": 1,
+      "unit": "nos",
+      "unit_price": 0.0,
+      "discount": 0.0,
+      "taxable_value": 0.0,
+      "cgst_rate": 0.0,
+      "sgst_rate": 0.0,
+      "igst_rate": 0.0,
+      "cgst_amount": 0.0,
+      "sgst_amount": 0.0,
+      "igst_amount": 0.0,
+      "total": 0.0
     }
   ],
-  "subtotal": numeric_amount_before_tax,
-  "cgst_total": numeric_or_0,
-  "sgst_total": numeric_or_0,
-  "igst_total": numeric_or_0,
-  "total_tax": numeric_total_tax_amount,
-  "discount_total": numeric_total_discount_or_0,
-  "round_off": numeric_rounding_adjustment_or_0,
-  "total_amount": numeric_final_payable_amount,
-  "amount_in_words": "Amount in words if printed",
+  "subtotal": 0.0,
+  "cgst_total": 0.0,
+  "sgst_total": 0.0,
+  "igst_total": 0.0,
+  "total_tax": 0.0,
+  "discount_total": 0.0,
+  "round_off": 0.0,
+  "total_amount": 0.0,
+  "amount_in_words": "Amount in words if printed, else null",
   "currency": "INR",
-  "payment_terms": "Payment terms if visible",
+  "payment_terms": "Payment terms if visible, else null",
   "bank_details": {
-    "bank_name": "Bank name if visible",
-    "account_number": "Account number if visible",
-    "ifsc": "IFSC code if visible"
+    "bank_name": null,
+    "account_number": null,
+    "ifsc": null
   },
   "category": "One of: IT Services, Automotive, Fuel & Energy, Banking & Finance, Construction, E-Commerce, Food & Beverage, Travel & Accommodation, Travel & Transportation, Education & Training, Retail & Shopping, Healthcare & Medical, Office Supplies, Professional Services, Utilities, Other",
-  "document_type": "One of: TAX_INVOICE, PROFORMA_INVOICE, BILL, RECEIPT, CREDIT_NOTE, DEBIT_NOTE",
-  "confidence_score": 0.00_to_1.00_float_your_confidence_in_extraction,
-  "extraction_notes": "Any important observations, anomalies, or unclear fields",
-  "fraud_signals": [
-    "List any suspicious observations like: round amounts, missing GSTIN, overwriting, unclear vendor, mismatched totals, etc."
-  ]
+  "document_type": "TAX_INVOICE",
+  "confidence_score": 0.0,
+  "extraction_notes": "Any observations about quality, missing fields, or anomalies",
+
+  "fraud_analysis": {
+    "fraud_score": "Float 0.0 (clean) to 1.0 (definitely fraud) — YOUR HONEST ASSESSMENT",
+    "is_fraud": "true if fraud_score >= 0.65, else false",
+    "risk_level": "low | medium | high | critical",
+    "signals": [
+      "List every suspicious indicator you observe. Be thorough and specific."
+    ],
+    "tampering_detected": "true if you see signs of digital editing, overwriting, or font inconsistencies",
+    "gstin_valid_format": "true if GSTIN matches the 15-char Indian format, false if missing or malformed",
+    "math_checks_pass": "true if subtotal + tax = total, false if numbers do not add up",
+    "vendor_legitimacy": "legitimate | suspicious | unknown",
+    "duplicate_risk": "low | medium | high",
+    "audit_recommendation": "APPROVE | MANUAL_REVIEW | REJECT"
+  }
 }
 
-Rules:
-- All numeric values must be plain numbers (no currency symbols, no commas)
-- If a field is not visible or not applicable, use null for strings and 0 for numbers
-- invoice_date must always be in YYYY-MM-DD format
-- confidence_score between 0.0 and 1.0 based on image quality and completeness
-- For receipts without line items, create a single item with the total as the amount
-- Always include fraud_signals array (can be empty [])
-- Do not hallucinate data — only extract what is clearly visible
+FRAUD DETECTION RULES — check ALL of these and flag any that apply:
+1. GSTIN missing or malformed (should be exactly 15 chars: 2 digits + 10 alphanumeric + 1 alpha + 1 alphanumeric + 1 alpha)
+2. Math inconsistency: subtotal + CGST + SGST + IGST ≠ total_amount (allow ±1 rounding)
+3. Suspiciously round total amounts (e.g., exactly 5000, 10000)
+4. Invoice date in the future or more than 1 year in the past
+5. Missing vendor address or contact info
+6. No line items or extremely vague descriptions like "services", "misc", "work done"
+7. Unprofessional formatting — misaligned text, inconsistent fonts, suspicious whitespace
+8. Low image quality that could be hiding alterations
+9. No official stamp or signature where expected for the document type
+10. Handwritten amounts on printed invoice (common tampering method)
+11. Amounts in words don't match numeric total
+12. Tax calculation errors (CGST should equal SGST for intrastate; IGST used for interstate)
+13. Duplicate-looking invoice numbers (sequential or very simple like INV-001)
+14. Vendor name appears to be a person's name (not a company) for a B2B tax invoice
+15. Invoice number contains suspicious patterns
+
+IMPORTANT: fraud_score must be YOUR REAL ASSESSMENT, not a placeholder. A legitimate, clean, professional invoice from a real company with correct math and GSTIN should score 0.05–0.20. A suspicious invoice should score 0.4–0.6. A clearly fake/tampered/fraudulent invoice should score 0.7–1.0.
 """
 
 
 # ─── Gemini OCR Service ────────────────────────────────────────────────────────
 
-
 class GeminiOCRService:
     """
-    Production OCR service powered by Google Gemini 3.1 Flash-Lite.
+    Production OCR + Fraud Detection service powered by Google Gemini.
 
-    Supports JPEG, PNG, WEBP, and PDF uploads. Falls back to the
-    mock OCR service if the API key is not configured or a call fails.
+    Uses a 2-phase pipeline:
+      Phase 1 — Gate check: is this actually an invoice? Hard-rejects non-invoices.
+      Phase 2 — Extraction + Forensic fraud scoring by Gemini itself.
+
+    Does NOT fall back to mock data for fraud analysis. If Gemini is unavailable,
+    the upload is refused rather than silently passing fake bills.
     """
 
     def __init__(self) -> None:
@@ -122,10 +193,9 @@ class GeminiOCRService:
             self._client = httpx.AsyncClient(timeout=GEMINI_TIMEOUT_SECS)
         return self._client
 
-    # ── Internal helpers ──────────────────────────────────────────────────────
+    # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _encode_file(self, file_bytes: bytes, mime_type: str) -> dict[str, Any]:
-        """Encode file bytes as a Gemini-compatible inline_data part."""
         return {
             "inline_data": {
                 "mime_type": mime_type,
@@ -133,22 +203,21 @@ class GeminiOCRService:
             }
         }
 
-    def _build_request_body(self, file_bytes: bytes, mime_type: str) -> dict[str, Any]:
-        """Build the full Gemini generateContent request body."""
+    def _build_body(self, prompt: str, file_bytes: bytes, mime_type: str) -> dict[str, Any]:
         return {
             "contents": [
                 {
                     "parts": [
-                        {"text": INVOICE_EXTRACTION_PROMPT},
+                        {"text": prompt},
                         self._encode_file(file_bytes, mime_type),
                     ]
                 }
             ],
             "generationConfig": {
-                "temperature": 0.1,
+                "temperature": 0.05,
                 "topK": 1,
                 "topP": 0.95,
-                "maxOutputTokens": 4096,
+                "maxOutputTokens": 6000,
                 "responseMimeType": "application/json",
             },
             "safetySettings": [
@@ -159,47 +228,23 @@ class GeminiOCRService:
             ],
         }
 
-    @staticmethod
-    def _parse_gemini_response(response_json: dict) -> dict[str, Any]:
-        """Extract and parse the structured JSON from a Gemini API response."""
-        try:
-            candidates = response_json.get("candidates", [])
-            if not candidates:
-                raise ValueError("No candidates in Gemini response")
+    async def _call_gemini(self, body: dict) -> dict[str, Any]:
+        url = f"{GEMINI_API_BASE}/models/{GEMINI_MODEL}:generateContent?key={self.api_key}"
+        response = await self._http.post(url, json=body)
+        response.raise_for_status()
+        resp_json = response.json()
 
-            content = candidates[0].get("content", {})
-            parts = content.get("parts", [])
-            if not parts:
-                raise ValueError("No parts in Gemini response content")
+        candidates = resp_json.get("candidates", [])
+        if not candidates:
+            raise ValueError("No candidates in Gemini response")
 
-            raw_text = parts[0].get("text", "")
-
-            # Strip markdown code fences if present (shouldn't happen with responseMimeType)
-            cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text.strip())
-            return json.loads(cleaned)
-
-        except (json.JSONDecodeError, ValueError, KeyError, IndexError) as exc:
-            raise ValueError(f"Failed to parse Gemini response: {exc}") from exc
+        raw_text = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text.strip())
+        return json.loads(cleaned)
 
     @staticmethod
-    def _normalize_result(raw: dict[str, Any]) -> dict[str, Any]:
-        """Normalize and validate the extracted invoice data."""
-        today = date.today().isoformat()
-
-        # Ensure required fields have defaults
-        raw.setdefault("vendor_name", "Unknown Vendor")
-        raw.setdefault("gstin", None)
-        raw.setdefault("invoice_number", f"INV-{int(time.time())}")
-        raw.setdefault("invoice_date", today)
-        raw.setdefault("items", [])
-        raw.setdefault("currency", "INR")
-        raw.setdefault("category", "Other")
-        raw.setdefault("confidence_score", 0.75)
-        raw.setdefault("fraud_signals", [])
-        raw.setdefault("extraction_notes", "")
-        raw.setdefault("document_type", "TAX_INVOICE")
-
-        # Coerce numeric fields
+    def _normalize_numbers(raw: dict[str, Any]) -> dict[str, Any]:
+        """Ensure all numeric invoice fields are proper floats."""
         for field in ("subtotal", "total_tax", "total_amount", "cgst_total",
                       "sgst_total", "igst_total", "discount_total", "round_off"):
             try:
@@ -207,44 +252,139 @@ class GeminiOCRService:
             except (TypeError, ValueError):
                 raw[field] = 0.0
 
+        for item in raw.get("items", []):
+            if not isinstance(item, dict):
+                continue
+            for f in ("quantity", "unit_price", "discount", "taxable_value",
+                      "cgst_rate", "sgst_rate", "igst_rate",
+                      "cgst_amount", "sgst_amount", "igst_amount", "total"):
+                try:
+                    item[f] = float(item.get(f) or 0)
+                except (TypeError, ValueError):
+                    item[f] = 0.0
+
+        try:
+            raw["confidence_score"] = max(0.0, min(1.0, float(raw.get("confidence_score", 0.5))))
+        except (TypeError, ValueError):
+            raw["confidence_score"] = 0.5
+
+        return raw
+
+    # ── Phase 1: Gate Check ───────────────────────────────────────────────────
+
+    async def _gate_check(self, file_bytes: bytes, mime_type: str) -> None:
+        """
+        Phase 1: Ask Gemini if this is actually an invoice/receipt.
+        Raises NotAnInvoiceError immediately if not.
+        """
+        body = self._build_body(GATE_PROMPT, file_bytes, mime_type)
+        result = await self._call_gemini(body)
+
+        is_invoice = result.get("is_invoice", False)
+        confidence = float(result.get("confidence", 0.0))
+        rejection_reason = result.get("rejection_reason", "This does not appear to be a valid invoice or receipt.")
+
+        logger.info(
+            f"🔍 Gate check: is_invoice={is_invoice}, "
+            f"confidence={confidence:.2f}, doc_type={result.get('document_type')}"
+        )
+
+        # Reject if clearly not an invoice, or if AI is unsure (confidence < 0.4)
+        if not is_invoice or confidence < 0.4:
+            raise NotAnInvoiceError(rejection_reason or "The uploaded image is not a valid invoice or financial document.")
+
+    # ── Phase 2: Extraction + Fraud Analysis ──────────────────────────────────
+
+    async def _extract_and_analyse(
+        self,
+        file_bytes: bytes,
+        mime_type: str,
+    ) -> dict[str, Any]:
+        """
+        Phase 2: Full invoice extraction + AI-powered fraud scoring.
+        Returns the structured result. Raises FraudulentInvoiceError if
+        Gemini determines the bill is definitively fraudulent (score ≥ 0.75).
+        """
+        t_start = time.monotonic()
+        body = self._build_body(EXTRACTION_PROMPT, file_bytes, mime_type)
+        raw = await self._call_gemini(body)
+
+        # Normalize numeric fields
+        raw = self._normalize_numbers(raw)
+
         # If total_amount is 0 but subtotal is set, recompute
         if raw["total_amount"] == 0 and raw["subtotal"] > 0:
             raw["total_amount"] = raw["subtotal"] + raw["total_tax"]
 
-        # Normalize line items
-        normalized_items = []
-        for item in raw.get("items", []):
-            if not isinstance(item, dict):
-                continue
-            normalized_item = {
-                "description": str(item.get("description", "Service")),
-                "hsn_sac": str(item.get("hsn_sac", "")),
-                "quantity": float(item.get("quantity") or 1),
-                "unit": str(item.get("unit", "nos")),
-                "unit_price": float(item.get("unit_price") or 0),
-                "total": float(item.get("total") or 0),
-                "cgst_rate": float(item.get("cgst_rate") or 0),
-                "sgst_rate": float(item.get("sgst_rate") or 0),
-                "igst_rate": float(item.get("igst_rate") or 0),
-                "cgst_amount": float(item.get("cgst_amount") or 0),
-                "sgst_amount": float(item.get("sgst_amount") or 0),
-                "igst_amount": float(item.get("igst_amount") or 0),
-                "taxable_value": float(item.get("taxable_value") or 0),
-                "discount": float(item.get("discount") or 0),
-            }
-            normalized_items.append(normalized_item)
+        elapsed_ms = int((time.monotonic() - t_start) * 1000)
+        raw["processing_time_ms"] = elapsed_ms
+        raw["ocr_engine"] = "gemini-2.0-flash-lite"
 
-        raw["items"] = normalized_items
+        # ── Pull fraud_analysis out of the response ───────────────────────────
+        fraud_block = raw.get("fraud_analysis", {})
+        if isinstance(fraud_block, dict):
+            try:
+                fs = float(fraud_block.get("fraud_score", 0.1))
+            except (TypeError, ValueError):
+                fs = 0.1
 
-        # Clamp confidence score
-        try:
-            raw["confidence_score"] = max(0.0, min(1.0, float(raw["confidence_score"])))
-        except (TypeError, ValueError):
-            raw["confidence_score"] = 0.75
+            fraud_block["fraud_score"] = round(max(0.0, min(1.0, fs)), 4)
 
+            is_fraud_raw = fraud_block.get("is_fraud", False)
+            if isinstance(is_fraud_raw, str):
+                is_fraud_raw = is_fraud_raw.lower() == "true"
+            fraud_block["is_fraud"] = bool(is_fraud_raw) or fraud_block["fraud_score"] >= 0.65
+
+            signals = fraud_block.get("signals", [])
+            if not isinstance(signals, list):
+                signals = [str(signals)]
+            fraud_block["signals"] = signals
+
+            raw["fraud_analysis"] = fraud_block
+
+            # Surface fraud_signals at the top level for API compatibility
+            raw["fraud_signals"] = signals
+            raw["is_flagged"] = fraud_block["is_fraud"]
+
+            recommendation = fraud_block.get("audit_recommendation", "MANUAL_REVIEW")
+
+            logger.info(
+                f"🛡️ Fraud analysis: score={fraud_block['fraud_score']:.2f}, "
+                f"is_fraud={fraud_block['is_fraud']}, "
+                f"recommendation={recommendation}, "
+                f"signals={len(signals)}"
+            )
+
+            # Hard reject truly fraudulent bills (Gemini score ≥ 0.75)
+            if fraud_block["fraud_score"] >= 0.75 or recommendation == "REJECT":
+                raise FraudulentInvoiceError(
+                    reason=(
+                        "Gemini AI has conclusively identified this document as "
+                        f"fraudulent or fabricated (fraud score: {fraud_block['fraud_score']:.0%}). "
+                        "Expense allowance has been denied."
+                    ),
+                    fraud_score=fraud_block["fraud_score"],
+                    signals=signals,
+                )
+
+        raw.setdefault("vendor_name", "Unknown Vendor")
+        raw.setdefault("gstin", None)
+        raw.setdefault("invoice_number", f"INV-{int(time.time())}")
+        raw.setdefault("invoice_date", date.today().isoformat())
+        raw.setdefault("items", [])
+        raw.setdefault("currency", "INR")
+        raw.setdefault("category", "Other")
+        raw.setdefault("extraction_notes", "")
+        raw.setdefault("document_type", "TAX_INVOICE")
+
+        logger.info(
+            f"✅ Extraction complete | vendor={raw.get('vendor_name')} | "
+            f"total=₹{raw.get('total_amount', 0):,.2f} | "
+            f"confidence={raw.get('confidence_score')} | {elapsed_ms}ms"
+        )
         return raw
 
-    # ── Main public method ────────────────────────────────────────────────────
+    # ── Main public entry point ───────────────────────────────────────────────
 
     async def extract_invoice_data(
         self,
@@ -252,80 +392,53 @@ class GeminiOCRService:
         mime_type: str = "image/jpeg",
     ) -> dict[str, Any]:
         """
-        Extract structured invoice data using Gemini 3.1 Flash-Lite.
+        Full 2-phase invoice analysis.
 
-        Parameters
-        ----------
-        file_bytes : bytes
-            Raw bytes of the uploaded receipt/invoice image or PDF.
-        mime_type : str
-            MIME type of the uploaded file.
-
-        Returns
-        -------
-        dict
-            Structured invoice data including vendor info, GSTIN, line items,
-            GST breakdown, totals, and fraud signals.
+        Raises
+        ------
+        NotAnInvoiceError
+            When the uploaded image is not a valid invoice/receipt.
+        FraudulentInvoiceError
+            When Gemini conclusively determines the bill is fraudulent.
+        RuntimeError
+            When Gemini API is not configured or unavailable.
         """
         if not self.api_key:
-            logger.warning("GEMINI_API_KEY not set — falling back to mock OCR")
-            return await self._fallback_mock(file_bytes, mime_type)
-
-        t_start = time.monotonic()
-        url = f"{GEMINI_API_BASE}/models/{GEMINI_MODEL}:generateContent?key={self.api_key}"
-        body = self._build_request_body(file_bytes, mime_type)
+            raise RuntimeError(
+                "Gemini AI is not configured (GEMINI_API_KEY missing). "
+                "Invoice processing is disabled. Contact your administrator."
+            )
 
         try:
-            response = await self._http.post(url, json=body)
-            response.raise_for_status()
-            resp_json = response.json()
+            # Phase 1: Strict document gate
+            await self._gate_check(file_bytes, mime_type)
 
-            raw_data = self._parse_gemini_response(resp_json)
-            result = self._normalize_result(raw_data)
+            # Phase 2: Extraction + fraud analysis
+            return await self._extract_and_analyse(file_bytes, mime_type)
 
-            elapsed_ms = int((time.monotonic() - t_start) * 1000)
-            result["processing_time_ms"] = elapsed_ms
-            result["ocr_engine"] = "gemini-2.0-flash-lite"
-            result["raw_text_preview"] = (
-                f"TAX INVOICE\n"
-                f"{result.get('vendor_name', 'Unknown')}\n"
-                f"GSTIN: {result.get('gstin', 'N/A')}\n"
-                f"Invoice No: {result.get('invoice_number', 'N/A')}\n"
-                f"Date: {result.get('invoice_date', 'N/A')}\n"
-                f"Amount Payable: INR {result.get('total_amount', 0):,.2f}\n"
-                f"[Extracted by Gemini 2.0 Flash-Lite OCR in {elapsed_ms}ms]"
-            )
-
-            logger.info(
-                f"✅ Gemini OCR complete | vendor={result.get('vendor_name')} | "
-                f"total=₹{result.get('total_amount', 0):,.2f} | "
-                f"confidence={result.get('confidence_score')} | {elapsed_ms}ms"
-            )
-            return result
+        except (NotAnInvoiceError, FraudulentInvoiceError):
+            raise  # Propagate hard rejections as-is
 
         except httpx.HTTPStatusError as exc:
             logger.error(f"Gemini API HTTP error {exc.response.status_code}: {exc.response.text[:500]}")
-            return await self._fallback_mock(file_bytes, mime_type)
+            raise RuntimeError(
+                f"Gemini API returned an error ({exc.response.status_code}). "
+                "Please try again or contact support."
+            ) from exc
+
         except httpx.RequestError as exc:
             logger.error(f"Gemini API request error: {exc}")
-            return await self._fallback_mock(file_bytes, mime_type)
-        except ValueError as exc:
-            logger.error(f"Gemini response parse error: {exc}")
-            return await self._fallback_mock(file_bytes, mime_type)
+            raise RuntimeError(
+                "Unable to reach the Gemini AI service. "
+                "Please check your internet connection and try again."
+            ) from exc
+
         except Exception as exc:
             logger.error(f"Unexpected Gemini OCR error: {exc}")
-            return await self._fallback_mock(file_bytes, mime_type)
-
-    async def _fallback_mock(self, file_bytes: bytes, mime_type: str) -> dict[str, Any]:
-        """Fall back to the deterministic mock OCR when Gemini is unavailable."""
-        from app.services.ocr_service import ocr_service as mock_service
-        mock_result = await mock_service.extract_receipt_data(file_bytes, mime_type)
-        mock_result["ocr_engine"] = "mock-fallback"
-        mock_result["fraud_signals"] = []
-        mock_result["document_type"] = "TAX_INVOICE"
-        mock_result["items"] = mock_result.pop("items", [])
-        logger.warning("⚠️  Using mock OCR fallback (Gemini unavailable)")
-        return mock_result
+            raise RuntimeError(
+                f"AI analysis failed unexpectedly: {exc}. "
+                "Invoice cannot be processed without AI verification."
+            ) from exc
 
     async def close(self) -> None:
         if self._client and not self._client.is_closed:

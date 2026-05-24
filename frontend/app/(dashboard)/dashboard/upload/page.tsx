@@ -28,7 +28,12 @@ import {
   Cpu,
   Sparkles,
   RefreshCw,
-  Send
+  Send,
+  XCircle,
+  ShieldX,
+  Ban,
+  FileX,
+  AlertOctagon
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/auth-store'
@@ -83,11 +88,26 @@ interface UploadResult {
     risk_level: string
     is_flagged: boolean
     flags: Array<{ code: string; description: string; weight: number }>
+    audit_recommendation?: string
+    tampering_detected?: boolean
+    math_checks_pass?: boolean
+    vendor_legitimacy?: string
   }
   ocr_engine: string
   confidence_score: number
   fraud_signals: string[]
   message: string
+}
+
+type RejectionCode = 'NOT_AN_INVOICE' | 'FRAUDULENT_INVOICE' | 'AI_UNAVAILABLE' | 'GENERIC'
+
+interface RejectionResult {
+  code: RejectionCode
+  title: string
+  message: string
+  action: string
+  fraud_score?: number
+  signals?: string[]
 }
 
 // ─── Pipeline Steps ───────────────────────────────────────────────────────────
@@ -134,6 +154,7 @@ export default function InvoiceUploadPage() {
 
   // Result state
   const [result, setResult] = useState<UploadResult | null>(null)
+  const [rejection, setRejection] = useState<RejectionResult | null>(null)
   const [showLineItems, setShowLineItems] = useState(false)
   const [showFraudDetails, setShowFraudDetails] = useState(false)
 
@@ -191,9 +212,9 @@ export default function InvoiceUploadPage() {
     setCurrentStep(0)
     setError(null)
     setResult(null)
+    setRejection(null)
 
     try {
-      // Visual pipeline animation
       await simulatePipelineStep(0, 400)  // validate
 
       const formData = new FormData()
@@ -207,14 +228,12 @@ export default function InvoiceUploadPage() {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
       const token = document.cookie.match(/access_token=([^;]+)/)?.[1] || ''
 
-      // Start the real upload
       const uploadPromise = fetch(`${apiUrl}/api/v1/expenses/upload`, {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: formData,
       }).catch(err => err as Error)
 
-      // Animate remaining steps while waiting for response
       await simulatePipelineStep(1, 600)  // text-localizer
       await simulatePipelineStep(2, 1200) // ocr
       await simulatePipelineStep(3, 800)  // retailer
@@ -223,79 +242,70 @@ export default function InvoiceUploadPage() {
       await simulatePipelineStep(6, 600)  // fraud
       await simulatePipelineStep(7, 400)  // save
 
-      // Await the actual response
       const response = await uploadPromise
 
       if (response instanceof Error) {
-        throw response
+        // Network error — backend offline
+        setRejection({
+          code: 'AI_UNAVAILABLE',
+          title: 'AI Engine Offline',
+          message: 'Cannot reach the Gemini AI verification service. Invoice processing requires AI analysis.',
+          action: 'Please ensure the backend server is running and try again.',
+        })
+        return
       }
 
+      // Parse error body for all non-2xx responses
       if (!response.ok) {
-        const errBody = await response.json().catch(() => ({}))
-        throw new Error(errBody?.detail || `Upload failed: ${response.status}`)
+        let detail: Record<string, unknown> = {}
+        try { detail = (await response.json())?.detail ?? {} } catch { /* */ }
+
+        const code = (detail?.code as string) ?? 'GENERIC'
+
+        if (code === 'NOT_AN_INVOICE') {
+          setRejection({
+            code: 'NOT_AN_INVOICE',
+            title: '🚫 Not an Invoice',
+            message: String(detail?.message ?? 'The uploaded image was not recognised as a valid invoice or receipt.'),
+            action: String(detail?.action ?? 'Please upload a genuine invoice, bill, or receipt.'),
+          })
+        } else if (code === 'FRAUDULENT_INVOICE') {
+          setRejection({
+            code: 'FRAUDULENT_INVOICE',
+            title: '🚨 Fraudulent Invoice Detected',
+            message: String(detail?.message ?? 'Gemini AI has identified this document as fraudulent.'),
+            action: String(detail?.action ?? 'This attempt has been permanently logged.'),
+            fraud_score: Number(detail?.fraud_score ?? 1),
+            signals: Array.isArray(detail?.signals) ? detail.signals as string[] : [],
+          })
+        } else if (code === 'AI_UNAVAILABLE') {
+          setRejection({
+            code: 'AI_UNAVAILABLE',
+            title: '⚠️ AI Verification Unavailable',
+            message: String(detail?.message ?? 'The AI service is temporarily unavailable.'),
+            action: String(detail?.action ?? 'Please try again later.'),
+          })
+        } else {
+          setError(String(detail?.message ?? `Upload failed (${response.status}). Please try again.`))
+        }
+        return
       }
 
       const data = await response.json()
-
-      if (!data.success) throw new Error(data.message || 'Upload failed')
-
+      if (!data.success) {
+        setError(data.message || 'Upload failed')
+        return
+      }
       setResult(data.data as UploadResult)
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'An unexpected error occurred.'
-
-      // For demo / no-backend mode: generate a mock result
-      if (msg.includes('fetch') || msg.includes('network') || msg.includes('Failed to fetch')) {
-        setResult(generateMockResult(file, parseFloat(amount), category, description))
-      } else {
-        setError(msg)
-      }
+      setError(err instanceof Error ? err.message : 'An unexpected error occurred.')
     } finally {
       setIsProcessing(false)
       setCurrentStep(-1)
     }
   }
 
-  // ── Mock result for demo ─────────────────────────────────────────────────
-
-  const generateMockResult = (f: File, amt: number, cat: string, desc: string): UploadResult => ({
-    expense_id: `EXP-${Date.now()}`,
-    status: 'pending',
-    amount: amt,
-    category: cat,
-    receipt_id: `RCP-${Date.now()}`,
-    ocr_engine: 'gemini-2.0-flash-lite',
-    confidence_score: 0.94,
-    fraud_signals: amt > 50000 ? ['Amount exceeds standard policy threshold'] : [],
-    message: 'Expense submitted for approval.',
-    ocr: {
-      vendor_name: vendorName || 'Tata Consultancy Services',
-      gstin: vendorGstin || '27AABCT1332L1Z8',
-      invoice_number: `TCS/${new Date().getFullYear()}-${new Date().getFullYear() % 100 + 1}/48291`,
-      invoice_date: new Date().toISOString().split('T')[0],
-      items: [
-        { description: desc || 'Professional Services', quantity: 1, unit_price: amt / 1.18, total: amt / 1.18, cgst_rate: 9, sgst_rate: 9, cgst_amount: amt * 0.09 / 1.18, sgst_amount: amt * 0.09 / 1.18, hsn_sac: '998314' }
-      ],
-      subtotal: amt / 1.18,
-      cgst_total: amt * 0.09 / 1.18,
-      sgst_total: amt * 0.09 / 1.18,
-      igst_total: 0,
-      total_tax: amt * 0.18 / 1.18,
-      total_amount: amt,
-      currency: 'INR',
-      category: cat,
-      document_type: 'TAX_INVOICE',
-      confidence_score: 0.94,
-      fraud_signals: amt > 50000 ? ['Amount exceeds standard policy threshold'] : [],
-      processing_time_ms: 1847,
-      ocr_engine: 'gemini-2.0-flash-lite',
-    },
-    fraud_analysis: {
-      fraud_score: amt > 50000 ? 0.42 : 0.11,
-      risk_level: amt > 50000 ? 'medium' : 'low',
-      is_flagged: false,
-      flags: amt > 50000 ? [{ code: 'HIGH_AMOUNT', description: 'Amount exceeds ₹50,000 threshold', weight: 0.3 }] : [],
-    },
-  })
+  // ── (mock removed — all analysis is live Gemini AI) ─────────────────────
 
   // ── Reset ─────────────────────────────────────────────────────────────────
 
@@ -308,6 +318,7 @@ export default function InvoiceUploadPage() {
     setVendorName('')
     setVendorGstin('')
     setResult(null)
+    setRejection(null)
     setError(null)
     setCompletedSteps(new Set())
     setCurrentStep(-1)
@@ -334,14 +345,149 @@ export default function InvoiceUploadPage() {
             Upload an invoice or receipt — Gemini 2.0 Flash-Lite will extract all data automatically
           </p>
         </div>
-        {result && (
+        {(result || rejection) && (
           <button onClick={handleReset} className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold transition-all border border-slate-700">
             <RefreshCw className="w-3.5 h-3.5" /> Upload Another
           </button>
         )}
       </motion.div>
 
-      {!result ? (
+      {/* ── Rejection Panel ─────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {rejection && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: 20 }}
+            transition={{ duration: 0.4, ease: 'easeOut' }}
+            className="relative overflow-hidden"
+          >
+            {/* Animated danger background */}
+            <div className={cn(
+              'rounded-2xl border-2 p-8 relative overflow-hidden',
+              rejection.code === 'NOT_AN_INVOICE'
+                ? 'border-amber-500/40 bg-amber-500/5'
+                : rejection.code === 'FRAUDULENT_INVOICE'
+                ? 'border-red-500/50 bg-red-500/8'
+                : 'border-slate-600/50 bg-slate-800/40'
+            )}>
+              {/* Pulsing glow */}
+              <div className={cn(
+                'absolute inset-0 opacity-10 blur-3xl pointer-events-none',
+                rejection.code === 'FRAUDULENT_INVOICE' ? 'bg-red-500' : 'bg-amber-500'
+              )} />
+
+              {/* Animated grid pattern */}
+              {rejection.code === 'FRAUDULENT_INVOICE' && (
+                <div className="absolute inset-0 opacity-5 pointer-events-none" style={{
+                  backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 20px, rgba(239,68,68,0.5) 20px, rgba(239,68,68,0.5) 21px), repeating-linear-gradient(90deg, transparent, transparent 20px, rgba(239,68,68,0.5) 20px, rgba(239,68,68,0.5) 21px)'
+                }} />
+              )}
+
+              <div className="relative z-10">
+                {/* Icon + Title */}
+                <div className="flex items-start gap-5 mb-6">
+                  <div className={cn(
+                    'w-16 h-16 rounded-2xl flex items-center justify-center shrink-0 shadow-lg',
+                    rejection.code === 'NOT_AN_INVOICE'
+                      ? 'bg-amber-500/15 border border-amber-500/30'
+                      : rejection.code === 'FRAUDULENT_INVOICE'
+                      ? 'bg-red-500/15 border border-red-500/30'
+                      : 'bg-slate-700/50 border border-slate-600'
+                  )}>
+                    {rejection.code === 'NOT_AN_INVOICE' && <FileX className="w-8 h-8 text-amber-400" />}
+                    {rejection.code === 'FRAUDULENT_INVOICE' && (
+                      <motion.div
+                        animate={{ scale: [1, 1.1, 1] }}
+                        transition={{ repeat: Infinity, duration: 1.5 }}
+                      >
+                        <ShieldX className="w-8 h-8 text-red-400" />
+                      </motion.div>
+                    )}
+                    {rejection.code === 'AI_UNAVAILABLE' && <AlertOctagon className="w-8 h-8 text-slate-400" />}
+                  </div>
+                  <div>
+                    <p className={cn(
+                      'text-xl font-bold mb-1',
+                      rejection.code === 'FRAUDULENT_INVOICE' ? 'text-red-300' :
+                      rejection.code === 'NOT_AN_INVOICE' ? 'text-amber-300' : 'text-slate-300'
+                    )}>
+                      {rejection.code === 'NOT_AN_INVOICE' ? '🚫 Not an Invoice' :
+                       rejection.code === 'FRAUDULENT_INVOICE' ? '🚨 Fraudulent Invoice Detected' :
+                       '⚠️ AI Verification Unavailable'}
+                    </p>
+                    <p className="text-slate-300 text-sm leading-relaxed">{rejection.message}</p>
+                  </div>
+                </div>
+
+                {/* Fraud score bar (FRAUDULENT only) */}
+                {rejection.code === 'FRAUDULENT_INVOICE' && rejection.fraud_score !== undefined && (
+                  <div className="mb-5 p-4 bg-red-500/10 border border-red-500/20 rounded-xl">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-bold text-red-400 uppercase tracking-wider">AI Fraud Score</span>
+                      <span className="text-2xl font-black text-red-300">{(rejection.fraud_score * 100).toFixed(0)}<span className="text-sm text-red-500">/100</span></span>
+                    </div>
+                    <div className="h-3 bg-slate-800 rounded-full overflow-hidden">
+                      <motion.div
+                        initial={{ width: 0 }}
+                        animate={{ width: `${rejection.fraud_score * 100}%` }}
+                        transition={{ duration: 1.2, ease: 'easeOut' }}
+                        className="h-full rounded-full bg-gradient-to-r from-orange-500 via-red-500 to-rose-600"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Fraud signals list */}
+                {rejection.signals && rejection.signals.length > 0 && (
+                  <div className="mb-5 space-y-2">
+                    <p className="text-xs font-bold text-red-400 uppercase tracking-wider mb-3">Fraud Signals Detected</p>
+                    {rejection.signals.map((signal, i) => (
+                      <div key={i} className="flex items-start gap-2.5 p-3 bg-red-500/5 border border-red-500/15 rounded-xl">
+                        <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
+                        <p className="text-xs text-slate-300">{signal}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Action / what to do */}
+                <div className={cn(
+                  'flex items-start gap-3 p-4 rounded-xl border',
+                  rejection.code === 'FRAUDULENT_INVOICE'
+                    ? 'bg-red-900/20 border-red-500/30'
+                    : 'bg-amber-900/20 border-amber-500/30'
+                )}>
+                  <Ban className={cn('w-4 h-4 shrink-0 mt-0.5', rejection.code === 'FRAUDULENT_INVOICE' ? 'text-red-400' : 'text-amber-400')} />
+                  <p className={cn('text-xs font-medium', rejection.code === 'FRAUDULENT_INVOICE' ? 'text-red-300' : 'text-amber-300')}>
+                    {rejection.action}
+                  </p>
+                </div>
+
+                {/* Try again button */}
+                <div className="mt-6 flex gap-3">
+                  <button
+                    onClick={handleReset}
+                    className="flex items-center gap-2 px-5 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-xl text-sm font-semibold transition-all border border-slate-600"
+                  >
+                    <RefreshCw className="w-4 h-4" /> Upload a Different File
+                  </button>
+                  {rejection.code !== 'FRAUDULENT_INVOICE' && (
+                    <button
+                      onClick={() => { setRejection(null); setError(null) }}
+                      className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-sm font-semibold transition-all"
+                    >
+                      <ArrowRight className="w-4 h-4" /> Try Again
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {!result && !rejection ? (
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
           {/* Left: Upload Form */}
           <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.1 }} className="lg:col-span-3 space-y-4">
@@ -590,38 +736,44 @@ export default function InvoiceUploadPage() {
                   <span className="text-xs font-semibold text-slate-300">Powered By</span>
                 </div>
                 <div className="p-3 bg-gradient-to-r from-violet-500/10 to-indigo-500/10 border border-violet-500/20 rounded-xl">
-                  <p className="text-xs font-bold text-violet-300">Gemini 2.0 Flash-Lite</p>
-                  <p className="text-[10px] text-slate-500 mt-1">Multimodal · PDF & Image · Low latency · GST-aware prompt</p>
-                </div>
-
-                <div className="mt-3 space-y-1.5 text-[10px] text-slate-500">
-                  {[
-                    ['Extracts', 'Vendor, GSTIN, line items, amounts'],
-                    ['Detects', 'Fraud signals & anomalies'],
-                    ['Validates', 'GSTIN checksum & totals'],
-                    ['Supports', 'JPEG, PNG, WEBP, PDF'],
-                  ].map(([k, v]) => (
-                    <div key={k} className="flex gap-2">
-                      <span className="text-slate-600 w-14 shrink-0">{k}</span>
-                      <span>{v}</span>
-                    </div>
-                  ))}
-                </div>
+             {/* Success/flagged banner */}
+          <div className={cn(
+            'glass-card rounded-2xl p-5 border',
+            result.status === 'FLAGGED' || result.status === 'flagged'
+              ? 'border-yellow-500/30 bg-yellow-500/5'
+              : 'border-emerald-500/20 bg-emerald-500/5'
+          )}>
+            <div className="flex items-center gap-3">
+              <div className={cn(
+                'w-10 h-10 rounded-xl flex items-center justify-center shrink-0',
+                result.status === 'FLAGGED' || result.status === 'flagged'
+                  ? 'bg-yellow-500/20' : 'bg-emerald-500/20'
+              )}>
+                {result.status === 'FLAGGED' || result.status === 'flagged'
+                  ? <AlertTriangle className="w-5 h-5 text-yellow-400" />
+                  : <CheckCircle2 className="w-5 h-5 text-emerald-400" />}
+              </div>
+              <div className="flex-1">
+                <h3 className="text-sm font-bold text-white">
+                  {result.status === 'FLAGGED' || result.status === 'flagged'
+                    ? '⚠️ Invoice Flagged for Manual Review'
+                    : '✅ Invoice Verified by Gemini AI'}
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Expense ID: <span className="font-mono text-indigo-400">{result.expense_id}</span> •{' '}
+                  Engine: <span className="text-violet-400 font-semibold">{result.ocr_engine || 'Gemini 2.0 Flash-Lite'}</span> •{' '}
+                  Confidence: <span className="text-emerald-400 font-bold">{((result.confidence_score || result.ocr?.confidence_score || 0.94) * 100).toFixed(0)}%</span>
+                </p>
+              </div>
+              <div className={cn('px-3 py-1.5 rounded-lg text-xs font-bold border',
+                result.status === 'PENDING' || result.status === 'pending' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
+                result.status === 'FLAGGED' || result.status === 'flagged' ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' :
+                'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+              )}>
+                {result.status.toUpperCase()}
               </div>
             </div>
-          </motion.div>
-        </div>
-      ) : (
-        /* ── Result view ──────────────────────────────────────────────────── */
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="space-y-4"
-        >
-          {/* Success banner */}
-          <div className="glass-card rounded-2xl p-5 border border-emerald-500/20 bg-emerald-500/5">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center shrink-0">
+          </div>e="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center shrink-0">
                 <CheckCircle2 className="w-5 h-5 text-emerald-400" />
               </div>
               <div className="flex-1">

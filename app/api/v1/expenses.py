@@ -40,7 +40,11 @@ from app.models.audit_log import AuditLog
 from app.models.expense import Expense, ExpenseCategory, ExpenseStatus
 from app.models.receipt import Receipt
 from app.models.user import Role, User
-from app.services.gemini_ocr_service import gemini_ocr_service
+from app.services.gemini_ocr_service import (
+    FraudulentInvoiceError,
+    NotAnInvoiceError,
+    gemini_ocr_service,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/expenses", tags=["Expenses"])
@@ -138,8 +142,11 @@ async def upload_expense(
     db: AsyncSession = Depends(get_db),
 ) -> Dict:
     """
-    Accept a receipt file upload, run OCR extraction and fraud analysis,
-    persist the expense + receipt, and return the full result.
+    Accept a receipt file upload, run STRICT Gemini AI 2-phase analysis:
+      Phase 1 — Gate: is this actually an invoice? Hard-reject if not.
+      Phase 2 — Extraction + forensic fraud scoring by Gemini.
+    Fraudulent or non-invoice uploads are REJECTED outright and never
+    stored in the approval queue.
     """
     # ── Validate file type ───────────────────────────────────────────────────
     allowed_types = {"image/jpeg", "image/png", "image/webp", "application/pdf"}
@@ -150,7 +157,7 @@ async def upload_expense(
         )
 
     content = await file.read()
-    if len(content) > 10 * 1024 * 1024:  # 10 MB
+    if len(content) > 10 * 1024 * 1024:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="File exceeds the 10 MB size limit.",
@@ -166,43 +173,99 @@ async def upload_expense(
             detail=f"Invalid category. Valid options: {valid}",
         )
 
-    # ── Gemini 3.1 Flash-Lite OCR extraction ────────────────────────────────
+    # ── Phase 1 + 2: Strict Gemini AI analysis ───────────────────────────────
+    # NotAnInvoiceError  → 422 (not a financial document)
+    # FraudulentInvoiceError → 403 (document identified as fraudulent)
+    # RuntimeError       → 503 (Gemini unavailable — do NOT fall back to mock)
     try:
         ocr_result = await gemini_ocr_service.extract_invoice_data(
             file_bytes=content,
             mime_type=file.content_type or "image/jpeg",
         )
-    except Exception as ocr_exc:
-        logger.warning("OCR extraction failed, using mock: %s", ocr_exc)
-        ocr_result = _mock_ocr_result(file.filename or "receipt", amount)
-
-    # ── Fraud analysis (combines AI fraud signals + rule-based checks) ───────
-    fraud_result = _mock_fraud_analysis(amount, ocr_result)
-
-    # Incorporate Gemini-detected fraud signals
-    gemini_signals = ocr_result.get("fraud_signals", [])
-    if gemini_signals:
-        for signal in gemini_signals:
-            fraud_result["flags"].append({
-                "code": "AI_SIGNAL",
-                "description": str(signal),
-                "weight": 0.2,
-            })
-        # Boost fraud score proportionally to number of AI signals
-        signal_boost = min(0.3, len(gemini_signals) * 0.08)
-        fraud_result["fraud_score"] = min(1.0, fraud_result["fraud_score"] + signal_boost)
-        fraud_result["is_flagged"] = fraud_result["fraud_score"] > 0.6
-        fraud_result["risk_level"] = (
-            "high" if fraud_result["fraud_score"] > 0.6
-            else "medium" if fraud_result["fraud_score"] > 0.3
-            else "low"
+    except NotAnInvoiceError as exc:
+        logger.warning(
+            "🚫 NOT-AN-INVOICE rejected | user=%s | reason=%s",
+            current_user.id, exc.reason,
         )
+        await _audit(
+            db, current_user.id, "INVOICE_REJECTED_NOT_AN_INVOICE", "expense",
+            current_user.organization_id,
+            {"reason": exc.reason, "filename": file.filename},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "NOT_AN_INVOICE",
+                "message": exc.reason,
+                "action": "Please upload a valid invoice, bill, or receipt.",
+            },
+        )
+    except FraudulentInvoiceError as exc:
+        logger.warning(
+            "🚨 FRAUD DETECTED | user=%s | score=%.2f | signals=%s",
+            current_user.id, exc.fraud_score, exc.signals,
+        )
+        await _audit(
+            db, current_user.id, "INVOICE_REJECTED_FRAUD", "expense",
+            current_user.organization_id,
+            {
+                "reason": exc.reason,
+                "fraud_score": exc.fraud_score,
+                "signals": exc.signals,
+                "filename": file.filename,
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "FRAUDULENT_INVOICE",
+                "message": exc.reason,
+                "fraud_score": exc.fraud_score,
+                "signals": exc.signals,
+                "action": "This expense claim has been permanently denied. The attempt has been logged.",
+            },
+        )
+    except RuntimeError as exc:
+        logger.error("Gemini AI unavailable: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "AI_UNAVAILABLE",
+                "message": str(exc),
+                "action": "Invoice processing requires AI verification. Please try again later.",
+            },
+        )
+
+    # ── Build fraud analysis block from Gemini result ─────────────────────────
+    fraud_block = ocr_result.get("fraud_analysis", {})
+    fraud_score = float(fraud_block.get("fraud_score", 0.1)) if isinstance(fraud_block, dict) else 0.1
+    is_flagged = bool(fraud_block.get("is_fraud", False)) if isinstance(fraud_block, dict) else False
+    risk_level = fraud_block.get("risk_level", "low") if isinstance(fraud_block, dict) else "low"
+    fraud_signals = ocr_result.get("fraud_signals", [])
+
+    # Build flags list from signals for API compatibility
+    fraud_flags = [
+        {"code": "AI_FRAUD_SIGNAL", "description": str(s), "weight": 0.3}
+        for s in fraud_signals
+    ]
+
+    fraud_result = {
+        "fraud_score": fraud_score,
+        "risk_level": risk_level,
+        "is_flagged": is_flagged,
+        "flags": fraud_flags,
+        "audit_recommendation": fraud_block.get("audit_recommendation", "MANUAL_REVIEW") if isinstance(fraud_block, dict) else "MANUAL_REVIEW",
+        "tampering_detected": fraud_block.get("tampering_detected", False) if isinstance(fraud_block, dict) else False,
+        "math_checks_pass": fraud_block.get("math_checks_pass", True) if isinstance(fraud_block, dict) else True,
+        "gstin_valid_format": fraud_block.get("gstin_valid_format", False) if isinstance(fraud_block, dict) else False,
+        "vendor_legitimacy": fraud_block.get("vendor_legitimacy", "unknown") if isinstance(fraud_block, dict) else "unknown",
+        "analysis_version": "gemini-2.0-flash-lite",
+        "analyzed_at": datetime.now(timezone.utc).isoformat(),
+    }
 
     # ── Persist receipt ──────────────────────────────────────────────────────
     receipt_id = str(uuid.uuid4())
     expense_id = str(uuid.uuid4())
-
-    # In production: upload content to S3 and store the URL
     file_url = f"https://storage.ledger.app/receipts/{receipt_id}/{file.filename}"
 
     receipt = Receipt(
@@ -216,13 +279,16 @@ async def upload_expense(
         created_at=datetime.now(timezone.utc),
     )
 
-    initial_status = ExpenseStatus.REJECTED if fraud_result["is_flagged"] else ExpenseStatus.PENDING
+    # PENDING = clean → goes to approval queue
+    # FLAGGED = suspicious (score 0.4–0.74) → finance manager must review
+    # REJECTED = already handled above by FraudulentInvoiceError (score ≥ 0.75)
+    if fraud_score >= 0.4:
+        initial_status = ExpenseStatus.FLAGGED
+    else:
+        initial_status = ExpenseStatus.PENDING
 
-    # Use OCR-extracted amount if not provided or use the higher confidence value
     ocr_total = float(ocr_result.get("total_amount") or 0)
     final_amount = ocr_total if ocr_total > 0 else amount
-
-    # Resolve vendor info: form input takes precedence, otherwise use OCR
     resolved_vendor_name = vendor_name or ocr_result.get("vendor_name")
     resolved_vendor_gstin = vendor_gstin or ocr_result.get("gstin")
 
@@ -239,9 +305,9 @@ async def upload_expense(
         vendor_gstin=resolved_vendor_gstin,
         trip_id=trip_id,
         status=initial_status,
-        fraud_score=fraud_result["fraud_score"],
-        fraud_flags=fraud_result["flags"],
-        is_flagged=fraud_result["is_flagged"],
+        fraud_score=fraud_score,
+        fraud_flags=fraud_flags,
+        is_flagged=is_flagged,
         expense_date=datetime.now(timezone.utc).date(),
         created_at=datetime.now(timezone.utc),
     )
@@ -262,7 +328,13 @@ async def upload_expense(
     await _audit(
         db, current_user.id, "EXPENSE_SUBMITTED", "expense",
         current_user.organization_id,
-        {"expense_id": expense_id, "amount": amount, "category": category},
+        {
+            "expense_id": expense_id,
+            "amount": final_amount,
+            "category": category,
+            "fraud_score": fraud_score,
+            "status": initial_status.value,
+        },
     )
 
     return _ok(
@@ -275,13 +347,19 @@ async def upload_expense(
             "file_url": file_url,
             "ocr": ocr_result,
             "fraud_analysis": fraud_result,
-            "ocr_engine": ocr_result.get("ocr_engine", "unknown"),
+            "ocr_engine": ocr_result.get("ocr_engine", "gemini-2.0-flash-lite"),
             "confidence_score": ocr_result.get("confidence_score", 0),
-            "fraud_signals": ocr_result.get("fraud_signals", []),
-            "message": "Expense flagged for review." if fraud_result["is_flagged"] else "Expense submitted for approval.",
+            "fraud_signals": fraud_signals,
+            "message": (
+                "⚠️ Invoice flagged for manual review due to suspicious indicators."
+                if is_flagged
+                else "✅ Invoice verified by AI — submitted for approval."
+            ),
         },
-        message="Expense uploaded and analysed successfully by Gemini AI.",
+        message="Invoice analysed by Gemini AI successfully.",
     )
+
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
