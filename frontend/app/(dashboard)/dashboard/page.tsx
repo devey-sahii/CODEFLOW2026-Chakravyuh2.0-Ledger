@@ -37,13 +37,7 @@ import {
 import { cn } from '@/lib/utils'
 import { RiskMeter } from '@/components/ui/risk-meter'
 import { Card, CardContent } from '@/components/ui/card'
-
-const initialStats = [
-  { label: 'Total Spend', value: '₹24.8L', change: '+12.5%', up: true, icon: TrendingUp, color: 'indigo', href: '/dashboard/expenses' },
-  { label: 'Fraud Detected', value: '₹3.2L', change: '-8.3%', up: false, icon: ShieldAlert, color: 'red', href: '/dashboard/fraud' },
-  { label: 'Claims Pending', value: '47', change: '+5', up: true, icon: Clock, color: 'yellow', href: '/dashboard/expenses' },
-  { label: 'Compliance Score', value: '91.4%', change: '+2.1%', up: true, icon: CheckCircle2, color: 'emerald', href: '/dashboard/gst' },
-]
+import { useAuthStore } from '@/store/auth-store'
 
 const monthlyData = [
   { month: 'Nov', spend: 18.2, fraud: 1.2, approved: 16.1 },
@@ -89,7 +83,11 @@ const statusConfig: Record<string, { label: string; cls: string }> = {
 
 export default function DashboardPage() {
   const router = useRouter()
-  const [recentActivity, setRecentActivity] = useState(initialRecentActivity)
+  const user = useAuthStore((state) => state.user)
+  const userRole = user?.role || 'admin'
+  const userFullName = user?.full_name || 'Rajesh Kumar'
+
+  const [activityList, setActivityList] = useState(initialRecentActivity)
   const [selectedClaim, setSelectedClaim] = useState<typeof initialRecentActivity[0] | null>(null)
   
   // Real-time telemetry scanner simulator
@@ -102,23 +100,70 @@ export default function DashboardPage() {
     { msg: '8 weekend submissions flagged', type: 'medium', href: '/dashboard/fraud' },
   ])
 
+  // Sync recent activity when role changes
+  useEffect(() => {
+    if (userRole === 'employee') {
+      setActivityList(
+        initialRecentActivity.map((item, idx) => ({
+          ...item,
+          employee: userFullName,
+          risk: idx === 0 ? 32 : idx === 1 ? 8 : idx === 2 ? 14 : 5,
+          status: idx === 0 ? 'pending' : idx === 1 ? 'approved' : idx === 2 ? 'approved' : 'approved',
+          flags: idx === 0 ? ['Standard policy check'] : [],
+        }))
+      )
+    } else {
+      setActivityList(initialRecentActivity)
+    }
+  }, [userRole, userFullName])
+
   useEffect(() => {
     const interval = setInterval(() => {
       // Simulate passive background OCR receipt checking
       setScanCount(prev => prev + Math.floor(Math.random() * 2) + 1)
-      if (Math.random() > 0.95) {
+      if (Math.random() > 0.95 && userRole !== 'employee') {
         setFraudCount(prev => prev + 1)
       }
     }, 4000)
     return () => clearInterval(interval)
-  }, [])
+  }, [userRole])
 
   const handleAction = (id: string, newStatus: 'approved' | 'flagged' | 'rejected') => {
-    setRecentActivity(prev =>
+    setActivityList(prev =>
       prev.map(item => (item.id === id ? { ...item, status: newStatus } : item))
     )
     if (selectedClaim && selectedClaim.id === id) {
       setSelectedClaim(prev => (prev ? { ...prev, status: newStatus } : null))
+    }
+  }
+
+  // Dynamic stats configurations per role
+  const stats = React.useMemo(() => {
+    if (userRole === 'employee') {
+      return [
+        { label: 'Your Spend', value: '₹18,400', change: '+5.2%', up: true, icon: TrendingUp, color: 'indigo', href: '/dashboard/expenses' },
+        { label: 'Approved Claims', value: '6 claims', change: '+1', up: true, icon: CheckCircle2, color: 'emerald', href: '/dashboard/expenses' },
+        { label: 'Pending Review', value: '2 claims', change: '0', up: true, icon: Clock, color: 'yellow', href: '/dashboard/expenses' },
+        { label: 'Compliance Score', value: '98.5%', change: '+1.5%', up: true, icon: ShieldCheck, color: 'indigo', href: '/dashboard/expenses' },
+      ]
+    }
+    
+    // Default admin/manager/auditor stats
+    return [
+      { label: 'Total Spend', value: '₹24.8L', change: '+12.5%', up: true, icon: TrendingUp, color: 'indigo', href: '/dashboard/expenses' },
+      { label: 'Fraud Detected', value: `₹${(fraudCount * 26.5).toFixed(1)}K`, change: '-8.3%', up: false, icon: ShieldAlert, color: 'red', href: '/dashboard/fraud' },
+      { label: 'Claims Pending', value: '47', change: '+5', up: true, icon: Clock, color: 'yellow', href: '/dashboard/expenses' },
+      { label: 'Compliance Score', value: '91.4%', change: '+2.1%', up: true, icon: CheckCircle2, color: 'emerald', href: '/dashboard/gst' },
+    ]
+  }, [userRole, fraudCount])
+
+  const getRoleTitle = (role: string) => {
+    switch (role) {
+      case 'admin': return 'Administrator Control Center'
+      case 'finance_manager': return 'Finance Manager Board'
+      case 'auditor': return 'Auditor Control Panel'
+      case 'employee': return 'Employee Workstation'
+      default: return 'User Workspace'
     }
   }
 
@@ -129,26 +174,32 @@ export default function DashboardPage() {
         {/* Header */}
         <motion.div variants={itemVariants} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-white tracking-tight">Dashboard Overview</h1>
-            <p className="text-slate-400 text-xs mt-1">Autonomous ledger telemetry and AI invoice scanning insights.</p>
+            <h1 className="text-2xl font-bold text-white tracking-tight">{getRoleTitle(userRole)}</h1>
+            <p className="text-slate-400 text-xs mt-1">
+              {userRole === 'employee' 
+                ? 'Submit corporate invoices and check active claim audits.' 
+                : 'Autonomous ledger telemetry and AI invoice scanning insights.'}
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold">
               <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
               AI Core Scanning Live
             </div>
-            <Link
-              href="/dashboard/upload"
-              className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-all shadow-md shadow-indigo-500/10"
-            >
-              Upload Receipt
-            </Link>
+            {userRole !== 'auditor' && (
+              <Link
+                href="/dashboard/upload"
+                className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-all shadow-md shadow-indigo-500/10"
+              >
+                Upload Receipt
+              </Link>
+            )}
           </div>
         </motion.div>
 
         {/* Stats Grid */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {initialStats.map((stat, i) => {
+          {stats.map((stat, i) => {
             const Icon = stat.icon
             return (
               <motion.div
@@ -187,12 +238,18 @@ export default function DashboardPage() {
           <motion.div variants={itemVariants} className="glass-card rounded-2xl p-5 lg:col-span-2">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h3 className="font-semibold text-white text-sm">Monthly Spend Trend</h3>
-                <p className="text-xs text-slate-500">Last 7 months • in Lakhs (₹)</p>
+                <h3 className="font-semibold text-white text-sm">
+                  {userRole === 'employee' ? 'Your Spending Trend' : 'Monthly Spend Trend'}
+                </h3>
+                <p className="text-xs text-slate-500">
+                  {userRole === 'employee' ? 'Last 7 months spend summary (₹)' : 'Last 7 months • in Lakhs (₹)'}
+                </p>
               </div>
               <div className="flex gap-3 text-xs">
                 <span className="flex items-center gap-1 text-indigo-400"><span className="w-2 h-2 rounded bg-indigo-400 inline-block" />Spend</span>
-                <span className="flex items-center gap-1 text-red-400"><span className="w-2 h-2 rounded bg-red-400 inline-block" />Fraud</span>
+                {userRole !== 'employee' && (
+                  <span className="flex items-center gap-1 text-red-400"><span className="w-2 h-2 rounded bg-red-400 inline-block" />Fraud</span>
+                )}
               </div>
             </div>
             <div className="h-[200px] w-full text-xs">
@@ -212,8 +269,10 @@ export default function DashboardPage() {
                   <XAxis dataKey="month" stroke="#475569" />
                   <YAxis stroke="#475569" />
                   <Tooltip contentStyle={{ background: 'rgba(15,17,23,0.95)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 12, color: '#e2e8f0', fontSize: 12 }} />
-                  <Area type="monotone" dataKey="spend" stroke="#6366f1" strokeWidth={2} fill="url(#spendGrad)" />
-                  <Area type="monotone" dataKey="fraud" stroke="#ef4444" strokeWidth={2} fill="url(#fraudGrad)" />
+                  <Area type="monotone" dataKey={userRole === 'employee' ? 'approved' : 'spend'} stroke="#6366f1" strokeWidth={2} fill="url(#spendGrad)" />
+                  {userRole !== 'employee' && (
+                    <Area type="monotone" dataKey="fraud" stroke="#ef4444" strokeWidth={2} fill="url(#fraudGrad)" />
+                  )}
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -253,15 +312,21 @@ export default function DashboardPage() {
         <motion.div variants={itemVariants} className="glass-card rounded-2xl overflow-hidden">
           <div className="flex items-center justify-between p-5 border-b border-slate-800">
             <div>
-              <h3 className="font-semibold text-white text-sm">Recent Expense Claims</h3>
-              <p className="text-[10px] text-slate-400 mt-0.5">Click any claim row to load dynamic AI risk logs and direct approval controls.</p>
+              <h3 className="font-semibold text-white text-sm">
+                {userRole === 'employee' ? 'Your Recent Claims' : 'Recent Expense Claims'}
+              </h3>
+              <p className="text-[10px] text-slate-400 mt-0.5">
+                {userRole === 'employee'
+                  ? 'Audit status checklist of your corporate claims.'
+                  : 'Click any claim row to load dynamic AI risk logs and direct approval controls.'}
+              </p>
             </div>
             <Link href="/dashboard/expenses" className="text-xs text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1">
               View all <ArrowUpRight className="w-3.5 h-3.5" />
             </Link>
           </div>
           <div className="divide-y divide-slate-800/60">
-            {recentActivity.map((exp) => {
+            {activityList.map((exp) => {
               const sc = statusConfig[exp.status]
               return (
                 <div
@@ -301,6 +366,7 @@ export default function DashboardPage() {
 
         {/* Bottom row */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* AI Ingestion Activity */}
           <motion.div variants={itemVariants} className="glass-card rounded-2xl p-5">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-9 h-9 rounded-xl bg-indigo-500/15 flex items-center justify-center"><Brain className="w-4.5 h-4.5 text-indigo-400" /></div>
@@ -324,24 +390,37 @@ export default function DashboardPage() {
             </div>
           </motion.div>
 
+          {/* Compliance health (Filtered for Employees) */}
           <motion.div variants={itemVariants} className="glass-card rounded-2xl p-5">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-9 h-9 rounded-xl bg-emerald-500/15 flex items-center justify-center"><Zap className="w-4.5 h-4.5 text-emerald-400" /></div>
               <div>
-                <p className="text-sm font-semibold text-white">Compliance Health</p>
-                <p className="text-xs text-slate-500">Current audit metrics</p>
+                <p className="text-sm font-semibold text-white">
+                  {userRole === 'employee' ? 'Your Audit Status' : 'Compliance Health'}
+                </p>
+                <p className="text-xs text-slate-500">
+                  {userRole === 'employee' ? 'Personal performance' : 'Current audit metrics'}
+                </p>
               </div>
             </div>
             <div className="space-y-3">
-              {[
-                ['GST Filing Status', 94],
-                ['GSTIN Validity Rate', 88],
-                ['ITC Credits Claims', 76],
-                ['Active Vendor KYC', 91]
-              ].map(([k, v]) => (
-                <div key={k}>
+              {(userRole === 'employee'
+                ? [
+                    ['OCR Recognition Rate', 98],
+                    ['On-time Submissions', 100],
+                    ['Receipt Integrity', 95],
+                    ['Policy Violations', 100]
+                  ]
+                : [
+                    ['GST Filing Status', 94],
+                    ['GSTIN Validity Rate', 88],
+                    ['ITC Credits Claims', 76],
+                    ['Active Vendor KYC', 91]
+                  ]
+              ).map(([k, v]) => (
+                <div key={k as string}>
                   <div className="flex justify-between text-xs mb-1">
-                    <span className="text-slate-400 font-medium">{k}</span>
+                    <span className="text-slate-400 font-medium">{k as string}</span>
                     <span className="text-white font-bold">{v}%</span>
                   </div>
                   <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
@@ -352,24 +431,49 @@ export default function DashboardPage() {
             </div>
           </motion.div>
 
+          {/* Active Alerts / Policy Guide for Employees */}
           <motion.div variants={itemVariants} className="glass-card rounded-2xl p-5">
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-9 h-9 rounded-xl bg-red-500/15 flex items-center justify-center"><AlertTriangle className="w-4.5 h-4.5 text-red-400" /></div>
+              <div className="w-9 h-9 rounded-xl bg-red-500/15 flex items-center justify-center">
+                {userRole === 'employee' ? (
+                  <CheckCircle2 className="w-4.5 h-4.5 text-indigo-400" />
+                ) : (
+                  <AlertTriangle className="w-4.5 h-4.5 text-red-400" />
+                )}
+              </div>
               <div>
-                <p className="text-sm font-semibold text-white">Active Alerts</p>
-                <p className="text-xs text-slate-500">Action requested</p>
+                <p className="text-sm font-semibold text-white">
+                  {userRole === 'employee' ? 'Corporate Policies' : 'Active Alerts'}
+                </p>
+                <p className="text-xs text-slate-500">
+                  {userRole === 'employee' ? 'Compliance guidelines' : 'Action requested'}
+                </p>
               </div>
             </div>
             <div className="space-y-2.5">
-              {activeAlerts.map((a, i) => (
+              {(userRole === 'employee'
+                ? [
+                    { msg: 'Max monthly lodging: ₹25,000 limit', type: 'info', href: '#' },
+                    { msg: 'Keep single meals under ₹1,500/day limit', type: 'info', href: '#' },
+                    { msg: 'Verify merchant GSTIN is active', type: 'info', href: '#' },
+                    { msg: 'Duplicate claims are auto-flagged', type: 'info', href: '#' },
+                  ]
+                : activeAlerts
+              ).map((a, i) => (
                 <Link
                   key={i}
                   href={a.href}
                   className="flex items-start gap-2.5 p-1 rounded hover:bg-white/5 transition-all block group"
                 >
-                  <span className={cn('w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0', a.type === 'critical' ? 'bg-red-400 animate-ping' : a.type === 'high' ? 'bg-orange-400' : 'bg-yellow-400')} />
+                  <span className={cn('w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0', 
+                    a.type === 'critical' ? 'bg-red-400 animate-ping' : 
+                    a.type === 'high' ? 'bg-orange-400' : 
+                    a.type === 'info' ? 'bg-indigo-400' : 'bg-yellow-400'
+                  )} />
                   <span className="text-xs text-slate-400 group-hover:text-slate-200 transition-colors flex-1">{a.msg}</span>
-                  <span className="text-[10px] text-slate-600 group-hover:text-indigo-400 opacity-0 group-hover:opacity-100 transition-all">Audit →</span>
+                  {userRole !== 'employee' && (
+                    <span className="text-[10px] text-slate-600 group-hover:text-indigo-400 opacity-0 group-hover:opacity-100 transition-all">Audit →</span>
+                  )}
                 </Link>
               ))}
             </div>
@@ -477,30 +581,38 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {/* Action buttons inside drawer */}
-              <div className="flex gap-2 border-t border-slate-800 pt-4 mt-6">
-                <button
-                  onClick={() => handleAction(selectedClaim.id, 'rejected')}
-                  className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"
-                >
-                  <Ban className="h-4 w-4 shrink-0" />
-                  Reject
-                </button>
-                <button
-                  onClick={() => handleAction(selectedClaim.id, 'flagged')}
-                  className="flex-1 py-3 bg-orange-600/20 border border-orange-500/30 hover:bg-orange-600/30 text-orange-400 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"
-                >
-                  <ShieldAlert className="h-4 w-4 shrink-0" />
-                  Flag
-                </button>
-                <button
-                  onClick={() => handleAction(selectedClaim.id, 'approved')}
-                  className="flex-[2] py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/10"
-                >
-                  <Check className="h-4 w-4 shrink-0" />
-                  Approve Claim
-                </button>
-              </div>
+              {/* Action buttons inside drawer (Hidden for standard employees - read only) */}
+              {userRole !== 'employee' ? (
+                <div className="flex gap-2 border-t border-slate-800 pt-4 mt-6">
+                  <button
+                    onClick={() => handleAction(selectedClaim.id, 'rejected')}
+                    className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <Ban className="h-4 w-4 shrink-0" />
+                    Reject
+                  </button>
+                  <button
+                    onClick={() => handleAction(selectedClaim.id, 'flagged')}
+                    className="flex-1 py-3 bg-orange-600/20 border border-orange-500/30 hover:bg-orange-600/30 text-orange-400 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <ShieldAlert className="h-4 w-4 shrink-0" />
+                    Flag
+                  </button>
+                  <button
+                    onClick={() => handleAction(selectedClaim.id, 'approved')}
+                    className="flex-[2] py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/10"
+                  >
+                    <Check className="h-4 w-4 shrink-0" />
+                    Approve Claim
+                  </button>
+                </div>
+              ) : (
+                <div className="border-t border-slate-800 pt-4 mt-6">
+                  <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 rounded-xl text-center text-xs font-semibold">
+                    This claim is undergoing automated AI compliance auditing.
+                  </div>
+                </div>
+              )}
 
             </motion.div>
           </>

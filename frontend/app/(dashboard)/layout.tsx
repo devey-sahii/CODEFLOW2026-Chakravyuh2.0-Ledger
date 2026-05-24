@@ -4,7 +4,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Sidebar from "@/components/layout/sidebar";
 import Navbar from "@/components/layout/navbar";
-import AtmosphericBg from "@/components/ui/atmospheric-bg";
+import Silk from "@/components/ui/silk";
 
 export default function DashboardLayout({
   children,
@@ -17,7 +17,15 @@ export default function DashboardLayout({
   return (
     <div className="flex h-screen overflow-hidden bg-[#0a0b0f] relative">
       {/* Twilight atmospheric starry background */}
-      <AtmosphericBg />
+      <div className="absolute inset-0 z-0">
+        <Silk
+          speed={5}
+          scale={1}
+          color="#5227FF"
+          noiseIntensity={1.5}
+          rotation={0}
+        />
+      </div>
 
       {/* Mobile overlay */}
       <AnimatePresence>

@@ -95,7 +95,7 @@ export default function AtmosphericBg({ opacity = 1 }: AtmosphericBgProps) {
       style={{ opacity }}
     >
       {/* Deep twilight sky background gradient */}
-      <div className="absolute inset-0 bg-gradient-to-b from-[#090c1a] via-[#050814] to-[#020308]" />
+      <div className="absolute inset-0 bg-gradient-to-b from-[#111827] via-[#1f2937] to-[#374151]" />
       
       {/* Soft celestial glow from the top-center */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[85%] h-[65%] rounded-full bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-indigo-500/8 via-indigo-950/2 to-transparent blur-3xl" />

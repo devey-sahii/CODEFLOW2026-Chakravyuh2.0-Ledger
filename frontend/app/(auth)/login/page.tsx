@@ -98,6 +98,8 @@ export default function LoginPage() {
       // Mock login for demo credentials so the user can see the dashboard immediately
       if (data.email === "admin@company.in" && data.password === "password123") {
         await new Promise(resolve => setTimeout(resolve, 800)); // Simulate network delay
+        // Clear old role selection so user must re-select role each login
+        document.cookie = "selected_role=; path=/; max-age=0";
         document.cookie = "access_token=demo-token; path=/; max-age=86400";
         
         useAuthStore.getState().setUser({
@@ -117,19 +119,21 @@ export default function LoginPage() {
           last_login_at: new Date().toISOString(),
         });
         useAuthStore.getState().setTokens("demo-token", "demo-refresh-token");
-        window.location.href = "/dashboard";
+        window.location.href = "/select-role";
         return;
       }
       
       const userCredential = await signInWithEmailAndPassword(auth, data.email, data.password);
       const token = await userCredential.user.getIdToken();
+      // Clear old role selection so user must re-select role each login
+      document.cookie = "selected_role=; path=/; max-age=0";
       document.cookie = `access_token=${token}; path=/; max-age=86400`;
       
       useAuthStore.getState().setUser({
         id: userCredential.user.uid,
         email: userCredential.user.email || data.email,
         full_name: userCredential.user.displayName || "User",
-        role: "admin",
+        role: "employee",
         organization_id: "org-id",
         avatar_url: userCredential.user.photoURL || null,
         department: "Finance",
@@ -142,7 +146,7 @@ export default function LoginPage() {
         last_login_at: new Date().toISOString(),
       });
       useAuthStore.getState().setTokens(token, token);
-      window.location.href = "/dashboard";
+      window.location.href = "/select-role";
     } catch (error: any) {
       setError(error.message);
     } finally {
@@ -156,13 +160,15 @@ export default function LoginPage() {
     try {
       const result = await signInWithPopup(auth, provider);
       const token = await result.user.getIdToken();
+      // Clear old role selection so user must re-select role each login
+      document.cookie = "selected_role=; path=/; max-age=0";
       document.cookie = `access_token=${token}; path=/; max-age=86400`;
       
       useAuthStore.getState().setUser({
         id: result.user.uid,
         email: result.user.email || "",
         full_name: result.user.displayName || "User",
-        role: "admin",
+        role: "employee",
         organization_id: "org-id",
         avatar_url: result.user.photoURL || null,
         department: "Finance",
@@ -175,7 +181,7 @@ export default function LoginPage() {
         last_login_at: new Date().toISOString(),
       });
       useAuthStore.getState().setTokens(token, token);
-      window.location.href = "/dashboard";
+      window.location.href = "/select-role";
     } catch (error: any) {
       setError(error.message);
     } finally {

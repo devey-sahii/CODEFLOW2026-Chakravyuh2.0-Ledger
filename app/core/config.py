@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     # ─── Redis ───────────────────────────────────────────────────────────────
     REDIS_URL: str = "redis://localhost:6379/0"
 
+    # ─── Gemini AI ───────────────────────────────────────────────────────────
+    GEMINI_API_KEY: str = ""
+
     # ─── AWS S3 ──────────────────────────────────────────────────────────────
     AWS_ACCESS_KEY_ID: str = "mock-key"
     AWS_SECRET_ACCESS_KEY: str = "mock-secret"

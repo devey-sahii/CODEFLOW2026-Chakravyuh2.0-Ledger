@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils'
 // ============================================================
 
 const cardVariants = cva(
-  'rounded-2xl overflow-hidden transition-all duration-200 bg-slate-900 border-2 border-black',
+  'rounded-2xl overflow-hidden transition-all duration-200 bg-white/5 border border-white/10 backdrop-blur-sm',
   {
     variants: {
       variant: {
@@ -46,7 +46,7 @@ const cardVariants = cva(
     },
     defaultVariants: {
       variant: 'default',
-      padding: 'md',
+      padding: 'none',
       interactive: false,
     },
   },
@@ -85,7 +85,7 @@ const CardHeader = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDiv
   ({ className, ...props }, ref) => (
     <div
       ref={ref}
-      className={cn('flex flex-col space-y-1.5', className)}
+      className={cn('flex flex-col space-y-1.5 p-6', className)}
       {...props}
     />
   ),
@@ -129,7 +129,7 @@ CardDescription.displayName = 'CardDescription'
 
 const CardContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   ({ className, ...props }, ref) => (
-    <div ref={ref} className={cn('', className)} {...props} />
+    <div ref={ref} className={cn('p-6 pt-0', className)} {...props} />
   ),
 )
 CardContent.displayName = 'CardContent'
@@ -142,7 +142,7 @@ const CardFooter = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDiv
   ({ className, ...props }, ref) => (
     <div
       ref={ref}
-      className={cn('flex items-center pt-4 border-t border-white/5', className)}
+      className={cn('flex items-center p-6 pt-0 border-t border-white/5', className)}
       {...props}
     />
   ),

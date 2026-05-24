@@ -32,6 +32,7 @@ type NavItem = {
   href: string;
   icon: React.ReactNode;
   badge?: number;
+  rolesAllowed?: string[];
 };
 
 type NavSection = {
@@ -46,37 +47,37 @@ const navSections: NavSection[] = [
     title: "MAIN",
     items: [
       { label: "Dashboard Overview", href: "/dashboard", icon: <LayoutDashboard className="w-4 h-4" /> },
-      { label: "Upload Receipt", href: "/dashboard/upload", icon: <Upload className="w-4 h-4" /> },
+      { label: "Upload Receipt", href: "/dashboard/upload", icon: <Upload className="w-4 h-4" />, rolesAllowed: ["admin", "finance_manager", "employee"] },
       { label: "Expense Claims", href: "/dashboard/expenses", icon: <FileText className="w-4 h-4" />, badge: 12 },
     ],
   },
   {
     title: "DETECTION & AI",
     items: [
-      { label: "Fraud Alerts", href: "/dashboard/fraud", icon: <ShieldAlert className="w-4 h-4" />, badge: 3 },
-      { label: "GST Compliance", href: "/dashboard/gst", icon: <Receipt className="w-4 h-4" /> },
-      { label: "AI Recommendations", href: "/dashboard/risk-reports", icon: <Brain className="w-4 h-4" /> },
+      { label: "Fraud Alerts", href: "/dashboard/fraud", icon: <ShieldAlert className="w-4 h-4" />, badge: 3, rolesAllowed: ["admin", "finance_manager", "auditor"] },
+      { label: "GST Compliance", href: "/dashboard/gst", icon: <Receipt className="w-4 h-4" />, rolesAllowed: ["admin", "finance_manager", "auditor"] },
+      { label: "AI Recommendations", href: "/dashboard/risk-reports", icon: <Brain className="w-4 h-4" />, rolesAllowed: ["admin", "finance_manager", "auditor"] },
     ],
   },
   {
     title: "MANAGEMENT",
     items: [
-      { label: "Vendors", href: "/dashboard/vendors", icon: <Building2 className="w-4 h-4" /> },
-      { label: "Employees", href: "/dashboard/employees", icon: <Users className="w-4 h-4" /> },
+      { label: "Vendors", href: "/dashboard/vendors", icon: <Building2 className="w-4 h-4" />, rolesAllowed: ["admin", "finance_manager", "auditor"] },
+      { label: "Employees", href: "/dashboard/employees", icon: <Users className="w-4 h-4" />, rolesAllowed: ["admin", "finance_manager"] },
     ],
   },
   {
     title: "INSIGHTS",
     items: [
-      { label: "Analytics", href: "/dashboard/analytics", icon: <BarChart3 className="w-4 h-4" /> },
-      { label: "Activity Timeline", href: "/dashboard/audit-logs", icon: <ScrollText className="w-4 h-4" /> },
-      { label: "Integrations", href: "/dashboard/integrations", icon: <Plug className="w-4 h-4" /> },
+      { label: "Analytics", href: "/dashboard/analytics", icon: <BarChart3 className="w-4 h-4" />, rolesAllowed: ["admin", "finance_manager", "auditor"] },
+      { label: "Activity Timeline", href: "/dashboard/audit-logs", icon: <ScrollText className="w-4 h-4" />, rolesAllowed: ["admin", "auditor"] },
+      { label: "Integrations", href: "/dashboard/integrations", icon: <Plug className="w-4 h-4" />, rolesAllowed: ["admin", "finance_manager"] },
     ],
   },
   {
     title: "SYSTEM",
     items: [
-      { label: "Settings", href: "/dashboard/settings", icon: <Settings className="w-4 h-4" /> },
+      { label: "Settings", href: "/dashboard/settings", icon: <Settings className="w-4 h-4" />, rolesAllowed: ["admin"] },
     ],
   },
 ];
@@ -122,6 +123,9 @@ export default function Sidebar({ isOpen, onToggle, isMobile }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
 
+  const user = useAuthStore((state) => state.user);
+  const userRole = user?.role || "admin";
+
   const isActive = (href: string) => {
     if (href === "/dashboard") return pathname === "/dashboard";
     return pathname.startsWith(href);
@@ -131,9 +135,30 @@ export default function Sidebar({ isOpen, onToggle, isMobile }: SidebarProps) {
 
   const handleLogout = () => {
     document.cookie = "access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    document.cookie = "selected_role=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
     logout();
     router.push("/login");
   };
+
+  const getRoleLabel = (role: string) => {
+    switch (role) {
+      case "admin": return "Admin";
+      case "finance_manager": return "Finance Manager";
+      case "auditor": return "Auditor";
+      case "employee": return "Employee";
+      default: return role.charAt(0).toUpperCase() + role.slice(1);
+    }
+  };
+
+  const filteredSections = navSections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => {
+        if (!item.rolesAllowed) return true;
+        return item.rolesAllowed.includes(userRole);
+      }),
+    }))
+    .filter((section) => section.items.length > 0);
 
   return (
     <motion.aside
@@ -189,7 +214,7 @@ export default function Sidebar({ isOpen, onToggle, isMobile }: SidebarProps) {
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto overflow-x-hidden py-4 px-2 space-y-5">
-        {navSections.map((section) => (
+        {filteredSections.map((section) => (
           <div key={section.title} className="space-y-1">
             {/* Section title */}
             <AnimatePresence>
@@ -293,8 +318,8 @@ export default function Sidebar({ isOpen, onToggle, isMobile }: SidebarProps) {
         >
           {/* Avatar */}
           <div className="flex-shrink-0 relative">
-            <div className="w-8 h-8 rounded bg-indigo-600 border border-black flex items-center justify-center text-white text-sm font-bold">
-              R
+            <div className="w-8 h-8 rounded bg-indigo-600 border border-black flex items-center justify-center text-white text-sm font-bold uppercase font-mono">
+              {user?.full_name ? user.full_name.charAt(0) : "R"}
             </div>
             <div className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-400 border border-black" />
           </div>
@@ -310,9 +335,11 @@ export default function Sidebar({ isOpen, onToggle, isMobile }: SidebarProps) {
                 className="flex-1 min-w-0"
               >
                 <div className="text-sm font-semibold text-slate-200 truncate">
-                  Rajesh Kumar
+                  {user?.full_name ?? "Rajesh Kumar"}
                 </div>
-                <div className="text-xs text-slate-500 truncate font-semibold">Admin</div>
+                <div className="text-xs text-slate-500 truncate font-semibold">
+                  {getRoleLabel(userRole)}
+                </div>
               </motion.div>
             )}
           </AnimatePresence>

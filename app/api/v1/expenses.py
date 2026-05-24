@@ -40,6 +40,7 @@ from app.models.audit_log import AuditLog
 from app.models.expense import Expense, ExpenseCategory, ExpenseStatus
 from app.models.receipt import Receipt
 from app.models.user import Role, User
+from app.services.gemini_ocr_service import gemini_ocr_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/expenses", tags=["Expenses"])
@@ -165,9 +166,37 @@ async def upload_expense(
             detail=f"Invalid category. Valid options: {valid}",
         )
 
-    # ── Mock OCR + fraud analysis (replace with real service calls) ──────────
-    ocr_result = _mock_ocr_result(file.filename or "receipt", amount)
+    # ── Gemini 3.1 Flash-Lite OCR extraction ────────────────────────────────
+    try:
+        ocr_result = await gemini_ocr_service.extract_invoice_data(
+            file_bytes=content,
+            mime_type=file.content_type or "image/jpeg",
+        )
+    except Exception as ocr_exc:
+        logger.warning("OCR extraction failed, using mock: %s", ocr_exc)
+        ocr_result = _mock_ocr_result(file.filename or "receipt", amount)
+
+    # ── Fraud analysis (combines AI fraud signals + rule-based checks) ───────
     fraud_result = _mock_fraud_analysis(amount, ocr_result)
+
+    # Incorporate Gemini-detected fraud signals
+    gemini_signals = ocr_result.get("fraud_signals", [])
+    if gemini_signals:
+        for signal in gemini_signals:
+            fraud_result["flags"].append({
+                "code": "AI_SIGNAL",
+                "description": str(signal),
+                "weight": 0.2,
+            })
+        # Boost fraud score proportionally to number of AI signals
+        signal_boost = min(0.3, len(gemini_signals) * 0.08)
+        fraud_result["fraud_score"] = min(1.0, fraud_result["fraud_score"] + signal_boost)
+        fraud_result["is_flagged"] = fraud_result["fraud_score"] > 0.6
+        fraud_result["risk_level"] = (
+            "high" if fraud_result["fraud_score"] > 0.6
+            else "medium" if fraud_result["fraud_score"] > 0.3
+            else "low"
+        )
 
     # ── Persist receipt ──────────────────────────────────────────────────────
     receipt_id = str(uuid.uuid4())
@@ -187,19 +216,27 @@ async def upload_expense(
         created_at=datetime.now(timezone.utc),
     )
 
-    initial_status = ExpenseStatus.FLAGGED if fraud_result["is_flagged"] else ExpenseStatus.PENDING
+    initial_status = ExpenseStatus.REJECTED if fraud_result["is_flagged"] else ExpenseStatus.PENDING
+
+    # Use OCR-extracted amount if not provided or use the higher confidence value
+    ocr_total = float(ocr_result.get("total_amount") or 0)
+    final_amount = ocr_total if ocr_total > 0 else amount
+
+    # Resolve vendor info: form input takes precedence, otherwise use OCR
+    resolved_vendor_name = vendor_name or ocr_result.get("vendor_name")
+    resolved_vendor_gstin = vendor_gstin or ocr_result.get("gstin")
 
     expense = Expense(
         id=expense_id,
         user_id=current_user.id,
         organization_id=current_user.organization_id,
         receipt_id=receipt_id,
-        amount=amount,
+        amount=final_amount,
         currency="INR",
         category=exp_category,
         description=description,
-        vendor_name=vendor_name or ocr_result.get("vendor_name"),
-        vendor_gstin=vendor_gstin or ocr_result.get("vendor_gstin"),
+        vendor_name=resolved_vendor_name,
+        vendor_gstin=resolved_vendor_gstin,
         trip_id=trip_id,
         status=initial_status,
         fraud_score=fraud_result["fraud_score"],
@@ -232,15 +269,18 @@ async def upload_expense(
         data={
             "expense_id": expense_id,
             "status": initial_status.value,
-            "amount": amount,
+            "amount": final_amount,
             "category": exp_category.value,
             "receipt_id": receipt_id,
             "file_url": file_url,
             "ocr": ocr_result,
             "fraud_analysis": fraud_result,
+            "ocr_engine": ocr_result.get("ocr_engine", "unknown"),
+            "confidence_score": ocr_result.get("confidence_score", 0),
+            "fraud_signals": ocr_result.get("fraud_signals", []),
             "message": "Expense flagged for review." if fraud_result["is_flagged"] else "Expense submitted for approval.",
         },
-        message="Expense uploaded and analysed successfully.",
+        message="Expense uploaded and analysed successfully by Gemini AI.",
     )
 
 

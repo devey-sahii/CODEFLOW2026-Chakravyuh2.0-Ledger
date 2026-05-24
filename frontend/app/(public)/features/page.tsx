@@ -53,7 +53,7 @@ function FeatureSection({
   visual,
 }: {
   index: number;
-  icon: React.ElementType;
+  icon: any;
   eyebrow: string;
   title: string;
   description: string;
@@ -644,7 +644,7 @@ export default function FeaturesPage() {
             className="flex flex-col sm:flex-row items-center justify-center gap-4"
           >
             <Link
-              href="/auth/register"
+              href="/signup"
               className="flex items-center gap-2 px-8 py-3.5 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 text-white font-semibold hover:from-indigo-500 hover:to-blue-500 shadow-lg shadow-indigo-500/30 transition-all duration-200"
             >
               Start Free Trial
@@ -711,7 +711,7 @@ export default function FeaturesPage() {
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <Link
-                href="/auth/register"
+                href="/signup"
                 className="flex items-center gap-2 px-8 py-4 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 text-white font-semibold text-lg hover:from-indigo-500 hover:to-blue-500 shadow-lg shadow-indigo-500/30 transition-all duration-200"
               >
                 Start 14-Day Free Trial
