@@ -37,8 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.deps import get_current_user, get_pagination, require_role
 from app.core.database import get_db
 from app.models.audit_log import AuditLog
-from app.models.expense import Expense, ExpenseCategory, ExpenseStatus
-from app.models.receipt import Receipt
+from app.models.expense import Expense, ExpenseCategory, ExpenseStatus, Receipt
 from app.models.user import Role, User
 from app.services.gemini_ocr_service import (
     FraudulentInvoiceError,

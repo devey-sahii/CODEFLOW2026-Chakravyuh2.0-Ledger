@@ -86,9 +86,6 @@ class ExpenseClaim(Base):
 
     __tablename__ = "expense_claims"
     __table_args__ = (
-        Index("ix_expense_claims_employee_id", "employee_id"),
-        Index("ix_expense_claims_organization_id", "organization_id"),
-        Index("ix_expense_claims_status", "status"),
         Index("ix_expense_claims_submitted_at", "submitted_at"),
         Index("ix_expense_claims_category", "category"),
     )
@@ -226,11 +223,7 @@ class Receipt(Base):
     """
 
     __tablename__ = "receipts"
-    __table_args__ = (
-        Index("ix_receipts_expense_claim_id", "expense_claim_id"),
-        Index("ix_receipts_processing_status", "processing_status"),
-        Index("ix_receipts_vendor_name", "vendor_name"),
-    )
+
 
     # ── Primary Key ──────────────────────────────────────────────────────────
     id: Mapped[uuid.UUID] = mapped_column(

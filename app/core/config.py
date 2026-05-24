@@ -23,8 +23,7 @@ class Settings(BaseSettings):
     # ─── Redis ───────────────────────────────────────────────────────────────
     REDIS_URL: str = "redis://localhost:6379/0"
 
-    # ─── Gemini AI ───────────────────────────────────────────────────────────
-    GEMINI_API_KEY: str = ""
+    # ─── Gemini AI ───────────────────────────────────────────────────────────                     
 
     # ─── AWS S3 ──────────────────────────────────────────────────────────────
     AWS_ACCESS_KEY_ID: str = "mock-key"
@@ -51,6 +50,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+        extra = "ignore"
 
 
 settings = Settings()

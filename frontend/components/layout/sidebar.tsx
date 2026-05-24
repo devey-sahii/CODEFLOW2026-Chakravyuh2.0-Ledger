@@ -22,6 +22,7 @@ import {
   LogOut,
   ChevronRight,
   X,
+  ScanLine,
 } from "lucide-react";
 import { useAuthStore } from "@/store/auth-store";
 
@@ -55,6 +56,7 @@ const navSections: NavSection[] = [
     title: "DETECTION & AI",
     items: [
       { label: "Fraud Alerts", href: "/dashboard/fraud", icon: <ShieldAlert className="w-4 h-4" />, badge: 3, rolesAllowed: ["admin", "finance_manager", "auditor"] },
+      { label: "Receipt Authenticity", href: "/dashboard/receipt-verify", icon: <ScanLine className="w-4 h-4" /> },
       { label: "GST Compliance", href: "/dashboard/gst", icon: <Receipt className="w-4 h-4" />, rolesAllowed: ["admin", "finance_manager", "auditor"] },
       { label: "AI Recommendations", href: "/dashboard/risk-reports", icon: <Brain className="w-4 h-4" />, rolesAllowed: ["admin", "finance_manager", "auditor"] },
     ],

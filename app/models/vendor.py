@@ -40,9 +40,6 @@ class Vendor(Base):
 
     __tablename__ = "vendors"
     __table_args__ = (
-        Index("ix_vendors_organization_id", "organization_id"),
-        Index("ix_vendors_gstin", "gstin"),
-        Index("ix_vendors_name", "name"),
         Index("ix_vendors_is_blacklisted", "is_blacklisted"),
     )
 

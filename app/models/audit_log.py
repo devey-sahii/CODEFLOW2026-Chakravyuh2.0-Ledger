@@ -62,14 +62,7 @@ class AuditLog(Base):
     """
 
     __tablename__ = "audit_logs"
-    __table_args__ = (
-        Index("ix_audit_logs_organization_id", "organization_id"),
-        Index("ix_audit_logs_user_id", "user_id"),
-        Index("ix_audit_logs_resource_type", "resource_type"),
-        Index("ix_audit_logs_resource_id", "resource_id"),
-        Index("ix_audit_logs_severity", "severity"),
-        Index("ix_audit_logs_created_at", "created_at"),
-    )
+
 
     # ── Primary Key ──────────────────────────────────────────────────────────
     id: Mapped[uuid.UUID] = mapped_column(
@@ -167,10 +160,6 @@ class FraudReport(Base):
 
     __tablename__ = "fraud_reports"
     __table_args__ = (
-        Index("ix_fraud_reports_organization_id", "organization_id"),
-        Index("ix_fraud_reports_expense_claim_id", "expense_claim_id"),
-        Index("ix_fraud_reports_receipt_id", "receipt_id"),
-        Index("ix_fraud_reports_status", "status"),
         Index("ix_fraud_reports_fraud_score", "fraud_score"),
     )
 
@@ -273,11 +262,7 @@ class GSTValidation(Base):
     """
 
     __tablename__ = "gst_validations"
-    __table_args__ = (
-        Index("ix_gst_validations_gstin", "gstin"),
-        Index("ix_gst_validations_organization_id", "organization_id"),
-        Index("ix_gst_validations_is_valid", "is_valid"),
-    )
+
 
     # ── Primary Key ──────────────────────────────────────────────────────────
     id: Mapped[uuid.UUID] = mapped_column(

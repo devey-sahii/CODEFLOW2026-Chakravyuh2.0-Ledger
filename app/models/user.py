@@ -40,8 +40,6 @@ class User(Base):
 
     __tablename__ = "users"
     __table_args__ = (
-        Index("ix_users_email", "email"),
-        Index("ix_users_organization_id", "organization_id"),
         Index("ix_users_role", "role"),
     )
 
