@@ -736,7 +736,16 @@ export default function InvoiceUploadPage() {
                   <span className="text-xs font-semibold text-slate-300">Powered By</span>
                 </div>
                 <div className="p-3 bg-gradient-to-r from-violet-500/10 to-indigo-500/10 border border-violet-500/20 rounded-xl">
-             {/* Success/flagged banner */}
+                  <p className="text-xs font-bold text-violet-300">Gemini 2.0 Flash-Lite</p>
+                  <p className="text-[10px] text-slate-500 mt-1">Enterprise OCR + Fraud Detection</p>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      ) : result ? (
+        <div className="space-y-6">
+          {/* Success/flagged banner */}
           <div className={cn(
             'glass-card rounded-2xl p-5 border',
             result.status === 'FLAGGED' || result.status === 'flagged'
@@ -768,25 +777,6 @@ export default function InvoiceUploadPage() {
               <div className={cn('px-3 py-1.5 rounded-lg text-xs font-bold border',
                 result.status === 'PENDING' || result.status === 'pending' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
                 result.status === 'FLAGGED' || result.status === 'flagged' ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' :
-                'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-              )}>
-                {result.status.toUpperCase()}
-              </div>
-            </div>
-          </div>e="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center shrink-0">
-                <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-              </div>
-              <div className="flex-1">
-                <h3 className="text-sm font-bold text-white">Invoice Processed Successfully</h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Expense ID: <span className="font-mono text-indigo-400">{result.expense_id}</span> •{' '}
-                  Engine: <span className="text-violet-400 font-semibold">{result.ocr_engine || 'Gemini 2.0 Flash-Lite'}</span> •{' '}
-                  Confidence: <span className="text-emerald-400 font-bold">{((result.confidence_score || result.ocr?.confidence_score || 0.94) * 100).toFixed(0)}%</span>
-                </p>
-              </div>
-              <div className={cn('px-3 py-1.5 rounded-lg text-xs font-bold border', 
-                result.status === 'pending' ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' :
-                result.status === 'flagged' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
                 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
               )}>
                 {result.status.toUpperCase()}
@@ -1009,8 +999,8 @@ export default function InvoiceUploadPage() {
               )}
             </div>
           </div>
-        </motion.div>
-      )}
+        </div>
+      ) : null}
     </div>
   )
 }
